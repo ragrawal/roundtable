@@ -1,0 +1,6 @@
+[run]
+source = roundtable
+
+[report]
+fail_under = 80
+show_missing = true
