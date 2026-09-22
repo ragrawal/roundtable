@@ -1,0 +1,3 @@
+_src_path: template/templates/python-project
+package_name: roundtable
+python_version: '3.12'

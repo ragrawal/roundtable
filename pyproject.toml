@@ -1,0 +1,27 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "roundtable"
+version = "0.1.0"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/roundtable"]
+
+[tool.poe]
+include = "poe_tasks.toml"
+
+[dependency-groups]
+dev = [
+    "ruff",
+    "pyright",
+    "pytest",
+    "pytest-cov",
+    "pytest-bdd",
+    "pytest-testmon",
+    "poethepoet",
+]

@@ -1,0 +1,36 @@
+[tasks.format]
+help = "Apply ruff formatting"
+cmd = "ruff format ."
+
+[tasks.lint]
+help = "Run ruff lint checks (no fixes)"
+cmd = "ruff check ."
+
+[tasks.typecheck]
+help = "Run pyright static type checking"
+cmd = "pyright"
+
+[tasks.test]
+help = "Run pytest; testmon-scoped by default, pass --full to run the whole suite with coverage enforced"
+args = [{ name = "full", options = ["--full"], type = "boolean" }]
+shell = """
+if [ -n "${full:-}" ]; then
+  pytest
+else
+  pytest --testmon -o addopts=
+fi
+"""
+
+[tasks.format-check]
+help = "Verify formatting without modifying files (used by check)"
+cmd = "ruff format --check ."
+
+[tasks.check]
+help = "Run format-check, lint, typecheck, and test (pass --full to run test's full suite with coverage enforced)"
+args = [{ name = "full", options = ["--full"], type = "boolean" }]
+sequence = [
+  { ref = "format-check" },
+  { ref = "lint" },
+  { ref = "typecheck" },
+  { ref = "test ${full:+--full}" },
+]

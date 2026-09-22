@@ -1,0 +1,16 @@
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[lint]
+select = ["E", "F", "I", "UP", "B", "D"]
+
+[lint.pydocstyle]
+convention = "google"
+
+[lint.per-file-ignores]
+"tests/**" = ["D"]
+
+[format]
+quote-style = "double"
+indent-style = "space"
