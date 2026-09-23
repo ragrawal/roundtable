@@ -34,6 +34,22 @@ persona = "Look for vulnerabilities."
 kind = "claude"
 """
 
+INVALID_AGENT_NAME_ROSTER_CONFIG_TEMPLATE = """
+round_limit = {round_limit}
+
+[[roster.agents]]
+name = "dev"
+role = "developer"
+persona = "Write the code."
+kind = "claude"
+
+[[roster.agents]]
+name = "senior engineer"
+role = "senior engineer"
+persona = "Review the code."
+kind = "claude"
+"""
+
 
 @given("herdr is available")
 def given_herdr_is_available(
@@ -61,6 +77,20 @@ def given_herdr_is_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
 )
 def given_roster_config_file(filename: str, round_limit: int, tmp_dir: Path) -> None:
     (tmp_dir / filename).write_text(ROSTER_CONFIG_TEMPLATE.format(round_limit=round_limit))
+
+
+@given(
+    parsers.parse(
+        'a roster config file "{filename}" with an invalid agent name '
+        "and a round limit of {round_limit:d}"
+    )
+)
+def given_roster_config_file_with_invalid_agent_name(
+    filename: str, round_limit: int, tmp_dir: Path
+) -> None:
+    (tmp_dir / filename).write_text(
+        INVALID_AGENT_NAME_ROSTER_CONFIG_TEMPLATE.format(round_limit=round_limit)
+    )
 
 
 @given("a roundtable workspace is already initialized there")

@@ -31,3 +31,12 @@ Feature: Project scaffolding
     Then the command exits with a non-zero code
     And the output contains "herdr"
     And the following files do not exist: {tmp_dir}/roundtable.toml
+
+  Scenario: init rejects a roster config with an agent name herdr would refuse
+    Given a temporary directory
+    And herdr is available
+    And a roster config file "roster.toml" with an invalid agent name and a round limit of 2
+    When the user runs "roundtable init {tmp_dir} --config {tmp_dir}/roster.toml"
+    Then the command exits with a non-zero code
+    And the output contains "should match pattern"
+    And the following files do not exist: {tmp_dir}/roundtable.toml

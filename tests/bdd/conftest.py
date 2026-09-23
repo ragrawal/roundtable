@@ -17,6 +17,7 @@ import pytest
 from tests.bdd.actions.agent_orchestration import *  # noqa: E402,F403
 from tests.bdd.actions.event_store import *  # noqa: E402,F403
 from tests.bdd.actions.files import *  # noqa: E402,F403
+from tests.bdd.actions.live_herdr import *  # noqa: E402,F403
 from tests.bdd.actions.review import *  # noqa: E402,F403
 from tests.bdd.actions.roundtable_cli import *  # noqa: E402,F403
 from tests.bdd.actions.shell import *  # noqa: E402,F403
