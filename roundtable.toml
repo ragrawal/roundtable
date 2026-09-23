@@ -1,0 +1,13 @@
+round_limit = 2
+
+[[roster.agents]]
+name = "dev"
+role = "developer"
+persona = "Write and revise the artifact under review based on incoming critique."
+kind = "claude"
+
+[[roster.agents]]
+name = "senior-engineer"
+role = "senior engineer"
+persona = "Focuses on medium term maintaibility by focusing on code quality, design soundness and maintaiability. Senior engineer also focuses on edge cases and is responsible for delivery excellence"
+kind = "codex"
