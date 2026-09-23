@@ -14,8 +14,13 @@ from pathlib import Path
 
 import pytest
 
+from tests.bdd.actions.agent_orchestration import *  # noqa: E402,F403
+from tests.bdd.actions.event_store import *  # noqa: E402,F403
 from tests.bdd.actions.files import *  # noqa: E402,F403
+from tests.bdd.actions.review import *  # noqa: E402,F403
+from tests.bdd.actions.roundtable_cli import *  # noqa: E402,F403
 from tests.bdd.actions.shell import *  # noqa: E402,F403
+from tests.bdd.actions.spec_review_rounds import *  # noqa: E402,F403
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 

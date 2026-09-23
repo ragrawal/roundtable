@@ -21,3 +21,17 @@ def then_file_contains(path: str, text: str, project_root: Path, tmp_dir: Path) 
     resolved_path = Path(resolve(path, project_root, tmp_dir))
     assert resolved_path.is_file(), f"missing {resolved_path}"
     assert text in resolved_path.read_text()
+
+
+@then(parsers.parse("the following files do not exist: {file_list}"))
+def then_files_do_not_exist(file_list: str, project_root: Path, tmp_dir: Path) -> None:
+    for raw_path in file_list.split(","):
+        path = Path(resolve(raw_path.strip(), project_root, tmp_dir))
+        assert not path.exists(), f"unexpected {path}"
+
+
+@then(parsers.parse("the following directories exist: {directory_list}"))
+def then_directories_exist(directory_list: str, project_root: Path, tmp_dir: Path) -> None:
+    for raw_path in directory_list.split(","):
+        path = Path(resolve(raw_path.strip(), project_root, tmp_dir))
+        assert path.is_dir(), f"missing directory {path}"

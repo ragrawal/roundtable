@@ -11,6 +11,9 @@ convention = "google"
 [lint.per-file-ignores]
 "tests/**" = ["D"]
 
+[lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Argument", "typer.Option"]
+
 [format]
 quote-style = "double"
 indent-style = "space"

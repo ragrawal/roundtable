@@ -7,7 +7,16 @@ name = "roundtable"
 version = "0.1.0"
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "pydantic>=2",
+    "pydantic-settings>=2",
+    "typer>=0.12",
+    "click>=8",
+    "tomli-w>=1",
+]
+
+[project.scripts]
+roundtable = "roundtable.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/roundtable"]
