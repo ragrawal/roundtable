@@ -35,13 +35,16 @@
   `timestamp`, `content` — no full-content or diff resolution
 - [ ] 2.4 Implement lifecycle-status derivation as the two independent
   signals the spec's "Run lifecycle status" requirement defines — outcome
-  label (`not started` / `in progress (estimated)` / `deadlocked (may
-  still be active)` / `consensus reached`) and connection health (`live` /
-  `stale` / `disconnected`) — returning both, never merged into one field,
-  per `design.md`
+  label (`no history yet (may be drafting)` / `in progress (estimated)` /
+  `deadlocked (may still be active)` / `consensus reached`) and connection
+  health (`live` / `stale` / `disconnected`) — returning both, never
+  merged into one field, per `design.md`
 - [ ] 2.5 Unit tests: dedup by `event_id` across repeated polls; outcome
-  label = `not started` on an empty `replay` result; connection health on
-  an empty `replay` result is `live` or `disconnected` only, never `stale`;
+  label = `no history yet (may be drafting)` on an empty `replay` result,
+  including while a first-draft turn is actively in progress and after a
+  failed first draft has already ended the run — confirming the label
+  never claims "not started" in either case; connection health on an
+  empty `replay` result is `live` or `disconnected` only, never `stale`;
   outcome label = `consensus reached` only on a `ConsensusReached` tail and
   remains `consensus reached` after connection health flips to
   `disconnected`; outcome label = `deadlocked (may still be active)` (not

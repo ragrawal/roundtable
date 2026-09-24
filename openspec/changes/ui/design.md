@@ -56,10 +56,11 @@ revisiting rather than assumed to carry over.
 ## Decision: run lifecycle status as two orthogonal signals, with deadlock treated as ambiguous
 
 **What**: status is two independent signals, not one field: an **outcome
-label** derived from the event tail (`not started` / `in progress
-(estimated)` / `deadlocked (may still be active)` / `consensus reached`),
-and a **connection health** derived from the live transport and event
-recency (`live` / `stale` / `disconnected`) — see the spec's "Run lifecycle
+label** derived from the event tail (`no history yet (may be drafting)` /
+`in progress (estimated)` / `deadlocked (may still be active)` /
+`consensus reached`), and a **connection health** derived from the live
+transport and event recency (`live` / `stale` / `disconnected`) — see the
+spec's "Run lifecycle
 status" requirement for the exact rules. `ConsensusReached` is the only
 tail value this design treats as reliably terminal. `ConsensusDeadlocked`
 is shown as "deadlocked (may still be active)," never as "complete." The
@@ -85,17 +86,38 @@ currently fresh) removes the ambiguity: each is independently well-defined,
 both are shown, and the one signal this design calls reliably terminal —
 `consensus reached` — can never be hidden by the other.
 
-**Why "not started"?** The first draft's five cases all presupposed at
-least one recorded event (`stale` needs a last-event timestamp to compare
-against; `in progress` needs a last event that isn't a terminal type).
-Review (round 4) pointed out that `replay` returning no events — the
-normal state of a specification before its first run, or a brand-new
-specification — falls into none of them, leaving an implementation to
-guess and risk mislabeling an idle specification as `stale` or
-`disconnected`. `not started` is now the outcome label whenever history is
-empty, and staleness is explicitly not evaluated against zero events (there
-is no timestamp to measure it from) — an empty-history specification's
-connection health is `live` or `disconnected` only.
+**Why an empty-history label at all, and why not "not started"?** The
+first draft's five cases all presupposed at least one recorded event
+(`stale` needs a last-event timestamp to compare against; `in progress`
+needs a last event that isn't a terminal type). A round-5 review pass
+pointed out that `replay` returning no events falls into none of them,
+leaving an implementation to guess and risk mislabeling an idle
+specification as `stale` or `disconnected`. A prior revision of this
+design added `not started` to close that gap — but a subsequent review
+(round 6) found `not started` itself to be a false claim: `run_draft`
+(`src/roundtable/orchestration.py`) allocates panes and prompts the
+developer agent, then blocks for up to `turn_timeout_ms`, before it ever
+appends the first `ArtifactDrafted` event. Empty history is therefore
+produced by three distinct situations the UI cannot tell apart from the
+store alone: a specification that has genuinely never been run, one whose
+first draft is actively in progress right now, and one whose first draft
+already failed (`DraftFailedError`) and ended the run with nothing
+recorded. Labeling all three "not started" misreports the middle case —
+active work — as if nothing were happening, which is worse than admitting
+the ambiguity.
+
+The label is now `no history yet (may be drafting)`, and the requirement
+says explicitly that connection health cannot be used to paper over this
+gap either: a "live" transport only means the browser-to-backend socket is
+up, not that any `ReviewRunner` process is executing, so it must not be
+read as "drafting is underway." Staleness is still not evaluated against
+zero events (there is no timestamp to measure it from), so an
+empty-history specification's connection health remains `live` or
+`disconnected` only. Resolving this properly needs the same tracked
+dependency as the deadlock ambiguity above: an explicit run-start event
+(and ideally a `run_id`) from the process driving a review. Until that
+exists, this design scopes the empty-history label to what it can
+honestly claim.
 
 **Why not treat any terminal-shaped event as "complete"?** The first draft
 treated both `ConsensusReached` and `ConsensusDeadlocked` as terminal,
@@ -143,8 +165,8 @@ real constraint.
 ## Open questions (tracked dependencies, not blocking this change)
 
 - A `run_id` on `EventEnvelope` and in the store, to support true multi-run
-  selection and to remove the deadlock-status ambiguity via an explicit
-  run-end signal.
+  selection and to remove both the deadlock-status ambiguity and the
+  empty-history ambiguity via an explicit run-start/run-end signal.
 - Artifact path metadata (or a documented phase-to-path mapping plus
   workspace/repository root access) so the version browser could resolve
   full content and diffs.

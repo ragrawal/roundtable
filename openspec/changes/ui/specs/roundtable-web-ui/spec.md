@@ -203,10 +203,21 @@ value for both signals at all times, including a specification for which
 undefined.
 
 **Outcome label**, computed from `replay(specification_id)`:
-- **not started**: `replay` returns no events. This covers a specification
-  with no run yet — a brand-new specification, or one the UI is pointed at
-  before its first draft — and is the only outcome label that applies when
-  history is empty.
+- **no history yet (may be drafting)**: `replay` returns no events. This is
+  the only outcome label that applies when history is empty, and it is
+  deliberately ambiguous rather than asserting "not started": `run_draft`
+  allocates panes and prompts the developer agent well before it appends
+  the first `ArtifactDrafted` event, so an active run can be mid-draft for
+  an arbitrary amount of time — up to `turn_timeout_ms` — while history is
+  still empty; a failed first draft (`DraftFailedError`) also leaves
+  history permanently empty with the run already over. Empty history is
+  therefore consistent with a specification that has never been run, one
+  whose first draft is in progress right now, and one whose first draft
+  already failed — the UI SHALL NOT claim to distinguish these and SHALL
+  NOT use the label "not started." Connection health does not resolve this
+  either: a "live" transport means the browser-to-backend link is up, not
+  that a runner process is executing (see the connection health rules
+  below), so it SHALL NOT be used to imply drafting is underway.
 - **consensus reached**: at least one event exists and the last one is
   `ConsensusReached`. This is the one outcome label this requirement
   treats as reliably terminal, because `ReviewRunner.run` returns
@@ -236,7 +247,7 @@ requirement below) and, where applicable, event recency:
   Staleness SHALL NOT be evaluated when zero events have ever been
   recorded — there is no event timestamp to measure staleness from, so an
   empty history is "live" or "disconnected" only, never "stale"; the
-  "not started" outcome label alone covers that case.
+  "no history yet (may be drafting)" outcome label alone covers that case.
 - **disconnected**: the transport itself is down, regardless of event
   count or recency. This is evaluated independently of staleness and can
   co-occur with any outcome label, including "consensus reached."
@@ -246,14 +257,34 @@ into the outcome label. The two are shown together as independent facts
 (e.g. "consensus reached" + "disconnected" is a valid, expected
 combination once a completed run's viewer later loses its connection —
 the completed outcome is not downgraded or replaced by the transport
-state). "not started" may co-occur with any connection health value (e.g.
-a UI that fails to connect before any run has begun shows "not started" +
+state). "no history yet (may be drafting)" may co-occur with any
+connection health value (e.g. a UI that fails to connect before any event
+has been recorded shows "no history yet (may be drafting)" +
 "disconnected," not "stale").
 
-#### Scenario: A specification with no recorded run shows "not started"
+#### Scenario: Empty history shows the ambiguous no-history label, not "not started"
 - **WHEN** `replay` returns no events for the viewed specification
-- **THEN** the UI shows the outcome label "not started"
-- **AND** does not show "stale," "in progress," or any other outcome label
+- **THEN** the UI shows the outcome label "no history yet (may be
+  drafting)"
+- **AND** does not show "stale," "in progress," or a label asserting the
+  run has not started
+
+#### Scenario: A live run mid-first-draft is not misreported as not-started
+- **WHEN** `ReviewRunner.run` has allocated panes and prompted the
+  developer agent for the first draft, and that turn has not yet completed
+- **AND** `replay` therefore still returns no events for the specification
+- **THEN** the UI shows the outcome label "no history yet (may be
+  drafting)"
+- **AND** the UI does not assert or imply that no run is underway
+
+#### Scenario: A failed first draft is also shown as no-history, not as active
+- **WHEN** the developer agent's first drafting turn has failed
+  (`DraftFailedError`) and the run has already ended without recording any
+  event
+- **THEN** `replay` returns no events and the UI shows the same "no history
+  yet (may be drafting)" outcome label
+- **AND** the UI does not claim to distinguish this ended run from a run
+  that never started or one still actively drafting
 
 #### Scenario: An idle new specification is not shown as stale
 - **WHEN** `replay` returns no events for the viewed specification

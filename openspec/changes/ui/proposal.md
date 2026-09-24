@@ -36,10 +36,14 @@ they relate to — as they're recorded.
   round, delivered by a backend process that tails `SqliteEventStore` and
   pushes (or is polled for) new events, deduplicated by `event_id`.
 - **Run lifecycle status as two always-defined, independent signals**: an
-  outcome label derived from the event tail (including a `not started`
-  label when no events exist yet) and a connection health derived from the
-  live transport, shown together rather than merged, never gating roster
-  saves or any other write. A `ConsensusDeadlocked` tail is labeled as an
+  outcome label derived from the event tail (including a deliberately
+  ambiguous "no history yet (may be drafting)" label when no events exist
+  yet — empty history covers a specification that has never run, one
+  actively drafting its first version, and one whose first draft already
+  failed, and the UI does not claim to tell these apart) and a connection
+  health derived from the live transport, shown together rather than
+  merged, never gating roster saves or any other write. A
+  `ConsensusDeadlocked` tail is labeled as an
   ambiguous, possibly-still-active outcome rather than "complete," because
   `ReviewRunner.run` can block on human confirmation after recording it and
   then resume into another round without emitting any event until the next
