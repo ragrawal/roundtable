@@ -180,7 +180,7 @@ def when_run_proceeds_confirming(resume_context: ResumeContext) -> None:
         resume_context.confirm_calls.append(True)
         return resume_context.confirm_response
 
-    outcome, _ = resume_context.runner.run(build_context="a widget", confirm=confirm)
+    outcome = resume_context.runner.run(build_context="a widget", confirm=confirm)
     resume_context.outcome = outcome
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -16,7 +17,6 @@ from roundtable.orchestration import (
     ReviewRunner,
     RoundOutcome,
     RunnerError,
-    TeardownWarning,
 )
 from tests.unit.test_review_runner import FakeEventStore, FakeHerdrClient, _init_git_repo
 
@@ -37,8 +37,8 @@ class OrchestrationContext:
     skip_result_for: set[str] = field(default_factory=set)
     blocking_for: dict[str, str] = field(default_factory=dict)
     outcome: RoundOutcome | None = None
-    warnings: tuple[TeardownWarning, ...] = ()
     error: Exception | None = None
+    messages: list[str] = field(default_factory=list)
 
 
 def _wire_responses(context: OrchestrationContext) -> None:
@@ -82,6 +82,7 @@ def given_roster(tmp_path: Path) -> OrchestrationContext:
     _init_git_repo(tmp_path)
     herdr = FakeHerdrClient()
     store = FakeEventStore()
+    messages: list[str] = []
     runner = ReviewRunner(
         herdr=herdr,
         store=store,
@@ -89,8 +90,11 @@ def given_roster(tmp_path: Path) -> OrchestrationContext:
         specification_id="spec-1",
         roster=ROSTER,
         round_limit=1,
+        report=messages.append,
     )
-    context = OrchestrationContext(root=tmp_path, herdr=herdr, store=store, runner=runner)
+    context = OrchestrationContext(
+        root=tmp_path, herdr=herdr, store=store, runner=runner, messages=messages
+    )
     _wire_responses(context)
     return context
 
@@ -117,15 +121,41 @@ def given_reviewer_blocks(
     orchestration_context.blocking_for[agent_name] = section
 
 
+@given(
+    parsers.parse(
+        'the "{waiting_agent}" reviewer waits for the "{finishing_agent}" reviewer to finish first'
+    )
+)
+def given_reviewer_waits_for_another(
+    orchestration_context: OrchestrationContext, waiting_agent: str, finishing_agent: str
+) -> None:
+    finished = threading.Event()
+    base_respond = orchestration_context.herdr.respond
+    assert base_respond is not None
+
+    def respond(target: str, text: str) -> None:
+        agent = next(
+            name
+            for name, pane in orchestration_context.herdr.started_agents.items()
+            if pane == target
+        )
+        if agent == waiting_agent:
+            finished.wait(timeout=5)
+        base_respond(target, text)
+        if agent == finishing_agent:
+            finished.set()
+
+    orchestration_context.herdr.respond = respond
+
+
 @when(parsers.parse('a review run starts with build context "{build_context}"'))
 def when_review_run_starts(orchestration_context: OrchestrationContext, build_context: str) -> None:
     try:
-        outcome, warnings = orchestration_context.runner.run(build_context=build_context)
+        outcome = orchestration_context.runner.run(build_context=build_context)
     except RunnerError as exc:
         orchestration_context.error = exc
         return
     orchestration_context.outcome = outcome
-    orchestration_context.warnings = warnings
 
 
 @then("three panes are allocated, one per agent")
@@ -161,17 +191,31 @@ def then_run_declares_deadlock(orchestration_context: OrchestrationContext, sect
     assert orchestration_context.outcome.target_section == section
 
 
-@then(parsers.parse('the "{agent_name}" agent\'s pane is released'))
-def then_pane_released(orchestration_context: OrchestrationContext, agent_name: str) -> None:
-    pane_id = orchestration_context.herdr.started_agents[agent_name]
-    assert pane_id in orchestration_context.herdr.closed_panes
-
-
 @then(parsers.parse('the "{agent_name}" agent\'s pane remains open for escalation'))
 def then_pane_remains_open(orchestration_context: OrchestrationContext, agent_name: str) -> None:
     pane_id = orchestration_context.herdr.started_agents[agent_name]
     assert pane_id not in orchestration_context.herdr.closed_panes
     assert agent_name in orchestration_context.runner.panes
+
+
+@then(
+    parsers.parse(
+        'the "{first_agent}" reviewer\'s result is reported before the "{second_agent}" '
+        "reviewer's result"
+    )
+)
+def then_reviewer_reported_before(
+    orchestration_context: OrchestrationContext, first_agent: str, second_agent: str
+) -> None:
+    def index_of_result(agent_name: str) -> int:
+        return next(
+            i
+            for i, message in enumerate(orchestration_context.messages)
+            if message.startswith(f"{agent_name} raised")
+            or message.startswith(f"{agent_name}'s turn")
+        )
+
+    assert index_of_result(first_agent) < index_of_result(second_agent)
 
 
 @then(parsers.parse("round {round_number:d}'s scratch artifacts remain on disk"))

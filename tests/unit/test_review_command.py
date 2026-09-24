@@ -13,8 +13,8 @@ from roundtable.review_command import (
     EXIT_ORCHESTRATION_FAILURE,
     execute_review,
 )
-from roundtable.store import JsonlEventStore
-from roundtable.workspace import events_root, write_config
+from roundtable.store import SqliteEventStore
+from roundtable.workspace import events_db_path, write_config
 from tests.unit.test_review_runner import FakeHerdrClient, _init_git_repo
 
 DEVELOPER = AgentProfile(name="dev", role="developer", persona="Write the code.", kind="claude")
@@ -65,7 +65,7 @@ def test_execute_review_returns_exit_consensus_and_records_consensus_reached(
     )
 
     assert exit_code == EXIT_CONSENSUS
-    store = JsonlEventStore(events_root(tmp_path))
+    store = SqliteEventStore(events_db_path(tmp_path))
     assert store.latest_of_type("spec-1", ConsensusReached) is not None
     assert "Consensus reached" in capsys.readouterr().out  # type: ignore[attr-defined]
 
@@ -91,7 +91,7 @@ def test_execute_review_returns_exit_deadlock_and_records_consensus_deadlocked(
     )
 
     assert exit_code == EXIT_DEADLOCK
-    store = JsonlEventStore(events_root(tmp_path))
+    store = SqliteEventStore(events_db_path(tmp_path))
     assert store.latest_of_type("spec-1", ConsensusDeadlocked) is not None
     assert "Deadlocked" in capsys.readouterr().out  # type: ignore[attr-defined]
 
@@ -173,6 +173,6 @@ def test_execute_review_returns_exit_orchestration_failure_without_recording_an_
     )
 
     assert exit_code == EXIT_ORCHESTRATION_FAILURE
-    store = JsonlEventStore(events_root(tmp_path))
+    store = SqliteEventStore(events_db_path(tmp_path))
     assert store.latest_of_type("spec-1", ConsensusReached) is None
     assert store.latest_of_type("spec-1", ConsensusDeadlocked) is None

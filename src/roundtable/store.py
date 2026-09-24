@@ -1,4 +1,4 @@
-"""Append-only JSONL event store, keyed by specification id.
+"""Append-only SQLite event store, keyed by specification id.
 
 Events are pre-validated `RoundtableEvent` Pydantic models by the time they
 reach `append` — construction is validation, per `AGENTS.md`'s
@@ -14,7 +14,6 @@ from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
 from typing import Protocol, TypeVar
-from uuid import UUID
 
 from roundtable.events import EventEnvelope, RoundtableEvent, RoundtableEventAdapter
 
@@ -28,8 +27,8 @@ class DuplicateEventError(Exception):
 class EventStoreProtocol(Protocol):
     """Behavior any event store backend must provide.
 
-    A seam for swapping the JSONL implementation for an indexed backend
-    (e.g. SQLite) later without changing `ReviewRunner` or `review-command`.
+    A seam for swapping `SqliteEventStore` for another backend later
+    without changing `ReviewRunner` or `review-command`.
     """
 
     def append(self, event: RoundtableEvent) -> None:
@@ -45,80 +44,13 @@ class EventStoreProtocol(Protocol):
         ...
 
 
-class JsonlEventStore:
-    """Append-only JSONL store with one file per specification id.
-
-    Each specification's events live in their own `<specification_id>.jsonl`
-    file under `root`, one JSON object per line in append order. There is no
-    operation that modifies or deletes an already-appended line.
-    """
-
-    def __init__(self, root: Path) -> None:
-        """Open (creating if needed) a store rooted at `root`.
-
-        Args:
-            root: Directory holding one `.jsonl` file per specification id.
-        """
-        self._root = root
-        self._root.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
-        self._known_ids: dict[str, set[UUID]] = {
-            path.stem: {event.event_id for event in self._read_all(path.stem)}
-            for path in self._root.glob("*.jsonl")
-        }
-
-    def _path_for(self, specification_id: str) -> Path:
-        return self._root / f"{specification_id}.jsonl"
-
-    def _read_all(self, specification_id: str) -> list[RoundtableEvent]:
-        path = self._path_for(specification_id)
-        if not path.exists():
-            return []
-        with path.open(encoding="utf-8") as handle:
-            return [RoundtableEventAdapter.validate_json(line) for line in handle if line.strip()]
-
-    def append(self, event: RoundtableEvent) -> None:
-        """Persist `event`, serializing concurrent callers under a lock.
-
-        Args:
-            event: The already-validated event to append.
-
-        Raises:
-            DuplicateEventError: `event.event_id` was already recorded for
-                its specification id.
-        """
-        with self._lock:
-            known = self._known_ids.setdefault(event.specification_id, set())
-            if event.event_id in known:
-                raise DuplicateEventError(
-                    f"Event {event.event_id} is already recorded for "
-                    f"specification {event.specification_id!r}."
-                )
-            line = RoundtableEventAdapter.dump_json(event).decode("utf-8")
-            with self._path_for(event.specification_id).open("a", encoding="utf-8") as handle:
-                handle.write(line + "\n")
-            known.add(event.event_id)
-
-    def replay(self, specification_id: str) -> Sequence[RoundtableEvent]:
-        """Return `specification_id`'s events in append order, or `[]` if none exist."""
-        return self._read_all(specification_id)
-
-    def latest_of_type(self, specification_id: str, event_type: type[EventT]) -> EventT | None:
-        """Return the most recently appended `event_type` event for `specification_id`."""
-        matches = [
-            event for event in self._read_all(specification_id) if isinstance(event, event_type)
-        ]
-        return matches[-1] if matches else None
-
-
 class SqliteEventStore:
     """Append-only SQLite-backed event store, indexed by specification id and event type.
 
-    The indexed alternative to `JsonlEventStore` referenced in this module's
-    docstring: every event is one row in a single `events` table, with
-    `event_id`, `specification_id`, `event_type`, `emitter`, and `timestamp`
-    broken out into their own columns for querying, and the full validated
-    event serialized into `payload` so `replay` reconstructs it exactly via
+    Every event is one row in a single `events` table, with `event_id`,
+    `specification_id`, `event_type`, `emitter`, and `timestamp` broken out
+    into their own columns for querying, and the full validated event
+    serialized into `payload` so `replay` reconstructs it exactly via
     `RoundtableEventAdapter`. A per-specification `sequence` column preserves
     append order independent of any clock.
     """

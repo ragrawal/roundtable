@@ -176,7 +176,7 @@ def test_init_reinit_replaces_roster_and_preserves_the_event_store(tmp_path: Pat
     from roundtable.workspace import events_root
 
     runner.invoke(cli.app, ["init", str(tmp_path)], input=ACCEPT_ALL_DEFAULTS_INPUT)
-    events_root(tmp_path).joinpath("some-spec.jsonl").write_text('{"kept": true}\n')
+    events_root(tmp_path).joinpath("events.db").write_text("kept")
 
     replacement_input = (
         "\n".join(["2", "solo", "developer", "", "claude", "qa", "qa engineer", "", "claude", "3"])
@@ -187,7 +187,7 @@ def test_init_reinit_replaces_roster_and_preserves_the_event_store(tmp_path: Pat
     assert result.exit_code == 0, result.output
     config = load_config(config_path(tmp_path))
     assert [a.name for a in config.roster.agents] == ["solo", "qa"]
-    assert events_root(tmp_path).joinpath("some-spec.jsonl").read_text() == '{"kept": true}\n'
+    assert events_root(tmp_path).joinpath("events.db").read_text() == "kept"
 
 
 def test_init_reinit_prefills_the_previous_configuration(tmp_path: Path) -> None:

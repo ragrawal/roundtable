@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import subprocess
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -44,7 +44,7 @@ class IncompleteReviewerTurn:
 
 @dataclass(frozen=True)
 class ReachedConsensus:
-    """Every reviewer completed its turn for the draft with no blocking critique."""
+    """Every reviewer completed its turn for the draft with no non-advisory critique."""
 
     approving_reviewers: tuple[str, ...]
     final_state_id: str
@@ -53,14 +53,14 @@ class ReachedConsensus:
 
 @dataclass(frozen=True)
 class RequestRevision:
-    """One or more blocking critiques were raised; another round is still available."""
+    """One or more non-advisory critiques were raised; another round is still available."""
 
     blocking_critiques: tuple[CritiqueFinding, ...]
 
 
 @dataclass(frozen=True)
 class Deadlocked:
-    """The round limit was reached with blocking critiques still outstanding."""
+    """The round limit was reached with non-advisory critiques still outstanding."""
 
     target_section: str
     opposing_viewpoints: tuple[OpposingViewpoint, ...]
@@ -78,6 +78,19 @@ RoundOutcome = ReachedConsensus | RequestRevision | Deadlocked | IncompleteRound
 
 _SEVERITY_VALUES = ", ".join(f'"{severity.value}"' for severity in Severity)
 """Rendered once for the critique prompt, so agents see the exact allowed `severity` values."""
+
+
+def _describe_findings(findings: tuple[CritiqueFinding, ...]) -> str:
+    """Render a reviewer's findings as a progress-report summary, grouped by severity."""
+    if not findings:
+        return "raised no findings."
+    counts = {severity: 0 for severity in Severity}
+    for finding in findings:
+        counts[finding.severity] += 1
+    breakdown = ", ".join(
+        f"{count} {severity.value}" for severity, count in counts.items() if count
+    )
+    return f"raised {len(findings)} finding(s): {breakdown}."
 
 
 class ReviewRound:
@@ -101,23 +114,24 @@ class ReviewRound:
 
         Returns:
             `IncompleteRound` if any reviewer turn failed; otherwise
-            `ReachedConsensus` if no `blocking` critique was raised;
-            otherwise `Deadlocked` if `round_number` has reached `round_limit`,
-            or `RequestRevision` if a further round is still available.
+            `ReachedConsensus` if no `blocking`, `major`, or `minor` critique
+            was raised (an `info` critique is purely advisory); otherwise
+            `Deadlocked` if `round_number` has reached `round_limit`, or
+            `RequestRevision` if a further round is still available.
         """
         incomplete = [turn for turn in turns if isinstance(turn, IncompleteReviewerTurn)]
         if incomplete:
             return IncompleteRound(failed_reviewers=tuple(turn.reviewer for turn in incomplete))
 
         completed = [turn for turn in turns if isinstance(turn, ReviewerTurn)]
-        blocking = [
+        non_advisory = [
             (turn.reviewer, finding)
             for turn in completed
             for finding in turn.findings
-            if finding.severity == Severity.BLOCKING
+            if finding.severity != Severity.INFO
         ]
 
-        if not blocking:
+        if not non_advisory:
             return ReachedConsensus(
                 approving_reviewers=tuple(turn.reviewer for turn in completed),
                 final_state_id=draft_version,
@@ -125,21 +139,21 @@ class ReviewRound:
             )
 
         if round_number >= round_limit:
-            return ReviewRound._build_deadlock(blocking)
+            return ReviewRound._build_deadlock(non_advisory)
 
-        return RequestRevision(blocking_critiques=tuple(finding for _, finding in blocking))
+        return RequestRevision(blocking_critiques=tuple(finding for _, finding in non_advisory))
 
     @staticmethod
-    def _build_deadlock(blocking: list[tuple[str, CritiqueFinding]]) -> Deadlocked:
-        target_section = blocking[0][1].target_section
+    def _build_deadlock(non_advisory: list[tuple[str, CritiqueFinding]]) -> Deadlocked:
+        target_section = non_advisory[0][1].target_section
         return Deadlocked(
             target_section=target_section,
             opposing_viewpoints=tuple(
                 OpposingViewpoint(agent=reviewer, position=finding.description)
-                for reviewer, finding in blocking
+                for reviewer, finding in non_advisory
             ),
             trade_offs="; ".join(
-                f"{reviewer}: {finding.description}" for reviewer, finding in blocking
+                f"{reviewer}: {finding.description}" for reviewer, finding in non_advisory
             ),
         )
 
@@ -217,15 +231,6 @@ class IncompleteRoundError(RunnerError):
 
 
 @dataclass(frozen=True)
-class TeardownWarning:
-    """A pane close failure encountered during teardown, reported as a secondary warning."""
-
-    agent_name: str
-    pane_id: str
-    reason: str
-
-
-@dataclass(frozen=True)
 class EscalationInstruction:
     """The pane identifier and attach instruction reported for one contested agent."""
 
@@ -253,6 +258,7 @@ class ReviewRunner:
     session: str | None = None
     turn_timeout_ms: int | None = None
     clock: Callable[[], datetime] = field(default=lambda: datetime.now(UTC))
+    report: Callable[[str], None] = field(default=lambda _message: None)
     panes: dict[str, str] = field(default_factory=dict)
 
     def _scratch_dir(self, round_number: int) -> Path:
@@ -325,6 +331,7 @@ class ReviewRunner:
             f"{developer.persona}\n\nDraft the specification for: {build_context}\n"
             f'Write your result as JSON matching {{"summary": str}} to {result_path}.'
         )
+        self.report(f"{developer.name} is drafting the specification.")
         try:
             self.herdr.agent_prompt(
                 self.panes[developer.name], prompt, wait=True, timeout_ms=self.turn_timeout_ms
@@ -380,17 +387,20 @@ class ReviewRunner:
             draft: The committed draft every reviewer is prompted with.
         """
         reviewers = self.roster.reviewers
+        self.report("Reviewers are critiquing the draft.")
         with ThreadPoolExecutor(max_workers=len(reviewers)) as pool:
             futures = {
                 pool.submit(self._run_reviewer_turn, reviewer, round_number, draft): reviewer
                 for reviewer in reviewers
             }
             results: dict[str, ReviewerTurn | IncompleteReviewerTurn] = {}
-            for future, reviewer in futures.items():
+            for future in as_completed(futures):
+                reviewer = futures[future]
                 try:
                     findings = future.result()
                 except Exception as exc:  # noqa: BLE001
                     results[reviewer.name] = IncompleteReviewerTurn(reviewer.name, reason=str(exc))
+                    self.report(f"{reviewer.name}'s turn failed: {exc}")
                     continue
                 for finding in findings:
                     self.store.append(
@@ -403,6 +413,7 @@ class ReviewRunner:
                         )
                     )
                 results[reviewer.name] = ReviewerTurn(reviewer.name, findings)
+                self.report(f"{reviewer.name} {_describe_findings(findings)}")
         return tuple(results[reviewer.name] for reviewer in reviewers)
 
     def run_revision(
@@ -435,6 +446,7 @@ class ReviewRunner:
             f"{critiques_text}\n\n"
             f'Write your result as JSON matching {{"summary": str}} to {result_path}.'
         )
+        self.report(f"{developer.name} is revising the draft.")
         try:
             self.herdr.agent_prompt(
                 self.panes[developer.name], prompt, wait=True, timeout_ms=self.turn_timeout_ms
@@ -501,33 +513,7 @@ class ReviewRunner:
             for agent_name in contested
         )
 
-    def teardown(self, *, retain: frozenset[str] = frozenset()) -> tuple[TeardownWarning, ...]:
-        """Close every framework-allocated pane except those in `retain`.
-
-        A close failure is collected rather than raised, so it cannot mask
-        the run's real outcome; it is returned for the caller to report as a
-        secondary warning.
-
-        Args:
-            retain: Agent names whose panes stay open for human escalation.
-        """
-        warnings: list[TeardownWarning] = []
-        remaining: dict[str, str] = {}
-        for agent_name, pane_id in self.panes.items():
-            if agent_name in retain:
-                remaining[agent_name] = pane_id
-                continue
-            try:
-                self.herdr.pane_close(pane_id)
-            except Exception as exc:  # noqa: BLE001
-                warnings.append(TeardownWarning(agent_name, pane_id, str(exc)))
-                remaining[agent_name] = pane_id
-        self.panes = remaining
-        return tuple(warnings)
-
-    def run(
-        self, *, build_context: str, confirm: Callable[[], bool] | None = None
-    ) -> tuple[RoundOutcome, tuple[TeardownWarning, ...]]:
+    def run(self, *, build_context: str, confirm: Callable[[], bool] | None = None) -> RoundOutcome:
         """Run a full review: allocate panes, draft, critique, revise, and terminate.
 
         On a declared deadlock, reports escalation instructions and, when
@@ -537,9 +523,16 @@ class ReviewRunner:
         or a missing `confirm` ends the run in the declared deadlock.
 
         A reviewer turn that fails or times out ends the run immediately —
-        it is not retried and does not count against the round limit — but
-        the failed reviewer's pane is left open rather than torn down, so a
-        human can attach and inspect what went wrong.
+        it is not retried and does not count against the round limit.
+
+        Once a turn has started in a pane, that pane is never automatically
+        closed for any outcome — consensus, deadlock, or an incomplete
+        round — so a human can attach and inspect any agent after the run
+        ends.
+
+        Progress is narrated through `self.report` as the run proceeds:
+        round starts, drafting/revising, critiquing, each reviewer's result
+        as it arrives, and the round's outcome.
 
         Args:
             build_context: The build description that seeds the first draft.
@@ -547,55 +540,59 @@ class ReviewRunner:
                 is reported; omit to end the run at the first deadlock.
 
         Returns:
-            The run's terminal outcome and any teardown warnings.
+            The run's terminal outcome.
 
         Raises:
-            IncompleteRoundError: a reviewer turn failed or timed out; the
-                failed reviewer's pane remains open for inspection.
+            IncompleteRoundError: a reviewer turn failed or timed out; every
+                allocated pane, including the failed reviewer's, remains
+                open for inspection.
         """
         self.allocate_panes()
-        retain_agents: frozenset[str] = frozenset()
-        final_outcome: RoundOutcome
-        try:
-            draft = self.run_draft(round_number=1, build_context=build_context)
-            round_number = 1
+        self.report("Round 1 started.")
+        draft = self.run_draft(round_number=1, build_context=build_context)
+        round_number = 1
+        exempt_next_round = False
+        while True:
+            effective_limit = round_number + 1 if exempt_next_round else self.round_limit
+            if exempt_next_round:
+                self.report(f"Round {round_number} started.")
             exempt_next_round = False
-            while True:
-                effective_limit = round_number + 1 if exempt_next_round else self.round_limit
-                exempt_next_round = False
-                turns = self.run_critique_round(round_number=round_number, draft=draft)
-                outcome = ReviewRound.decide(
-                    draft_version=draft.version_id,
-                    turns=turns,
-                    round_number=round_number,
-                    round_limit=effective_limit,
+            turns = self.run_critique_round(round_number=round_number, draft=draft)
+            outcome = ReviewRound.decide(
+                draft_version=draft.version_id,
+                turns=turns,
+                round_number=round_number,
+                round_limit=effective_limit,
+            )
+
+            if isinstance(outcome, IncompleteRound):
+                raise IncompleteRoundError(outcome.failed_reviewers)
+
+            if isinstance(outcome, ReachedConsensus):
+                self.record_consensus(outcome, round_number=round_number)
+                self.report(
+                    "Consensus reached; approving reviewers: "
+                    f"{', '.join(outcome.approving_reviewers)}."
                 )
+                return outcome
 
-                if isinstance(outcome, IncompleteRound):
-                    retain_agents = frozenset(outcome.failed_reviewers)
-                    raise IncompleteRoundError(outcome.failed_reviewers)
-
-                if isinstance(outcome, ReachedConsensus):
-                    self.record_consensus(outcome, round_number=round_number)
-                    final_outcome = outcome
-                    break
-
-                if isinstance(outcome, RequestRevision):
-                    draft = self.run_revision(
-                        round_number=round_number, blocking_critiques=outcome.blocking_critiques
-                    )
-                    round_number += 1
-                    continue
-
-                self.record_deadlock(outcome, round_number=round_number)
-                self.build_escalation(outcome)
-                if confirm is None or not confirm():
-                    retain_agents = frozenset(vp.agent for vp in outcome.opposing_viewpoints)
-                    final_outcome = outcome
-                    break
-
+            if isinstance(outcome, RequestRevision):
+                self.report(
+                    f"Revision requested; {len(outcome.blocking_critiques)} "
+                    "critique(s) outstanding."
+                )
+                self.report(f"Round {round_number + 1} started.")
+                draft = self.run_revision(
+                    round_number=round_number, blocking_critiques=outcome.blocking_critiques
+                )
                 round_number += 1
-                exempt_next_round = True
-        finally:
-            warnings = self.teardown(retain=retain_agents)
-        return final_outcome, warnings
+                continue
+
+            self.record_deadlock(outcome, round_number=round_number)
+            self.report(f"Deadlock declared on {outcome.target_section}.")
+            self.build_escalation(outcome)
+            if confirm is None or not confirm():
+                return outcome
+
+            round_number += 1
+            exempt_next_round = True

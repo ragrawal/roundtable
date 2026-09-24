@@ -1,9 +1,10 @@
-"""Unit tests for roundtable.store.JsonlEventStore."""
+"""Unit tests for roundtable.store.SqliteEventStore."""
 
 from __future__ import annotations
 
-import json
+import sqlite3
 import threading
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,7 +19,7 @@ from roundtable.events import (
     RoundtableEventAdapter,
     Severity,
 )
-from roundtable.store import DuplicateEventError, JsonlEventStore
+from roundtable.store import DuplicateEventError, SqliteEventStore
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
@@ -52,7 +53,7 @@ def _critique(specification_id: str = "spec-1", **overrides: object) -> Critique
 
 
 def test_replay_returns_events_in_append_order(tmp_path: Path) -> None:
-    store = JsonlEventStore(tmp_path)
+    store = SqliteEventStore(tmp_path / "events.db")
     events = [
         _drafted(),
         _critique(),
@@ -68,7 +69,7 @@ def test_replay_returns_events_in_append_order(tmp_path: Path) -> None:
 
 
 def test_duplicate_event_id_is_rejected_and_store_unchanged(tmp_path: Path) -> None:
-    store = JsonlEventStore(tmp_path)
+    store = SqliteEventStore(tmp_path / "events.db")
     event = _drafted()
     store.append(event)
 
@@ -78,12 +79,18 @@ def test_duplicate_event_id_is_rejected_and_store_unchanged(tmp_path: Path) -> N
     assert [e.event_id for e in store.replay("spec-1")] == [event.event_id]
 
 
-def test_invalid_event_leaves_store_byte_for_byte_unchanged(tmp_path: Path) -> None:
-    store = JsonlEventStore(tmp_path)
+def _row_count(path: Path) -> int:
+    with closing(sqlite3.connect(path)) as connection:
+        (count,) = connection.execute("SELECT COUNT(*) FROM events").fetchone()
+    return count
+
+
+def test_invalid_event_leaves_store_row_count_unchanged(tmp_path: Path) -> None:
+    db_path = tmp_path / "events.db"
+    store = SqliteEventStore(db_path)
     for event in (_drafted(), _critique(), _critique(review_id="round-2")):
         store.append(event)
-    path = tmp_path / "spec-1.jsonl"
-    before = path.read_bytes()
+    before = _row_count(db_path)
 
     with pytest.raises(ValidationError):
         RoundtableEventAdapter.validate_python(
@@ -97,11 +104,11 @@ def test_invalid_event_leaves_store_byte_for_byte_unchanged(tmp_path: Path) -> N
             }
         )
 
-    assert path.read_bytes() == before
+    assert _row_count(db_path) == before
 
 
 def test_replay_isolates_specifications(tmp_path: Path) -> None:
-    store = JsonlEventStore(tmp_path)
+    store = SqliteEventStore(tmp_path / "events.db")
     store.append(_drafted(specification_id="spec-a"))
     store.append(_drafted(specification_id="spec-b"))
     store.append(_critique(specification_id="spec-a"))
@@ -113,35 +120,37 @@ def test_replay_isolates_specifications(tmp_path: Path) -> None:
 
 
 def test_replay_of_unknown_specification_returns_empty_sequence(tmp_path: Path) -> None:
-    store = JsonlEventStore(tmp_path)
+    store = SqliteEventStore(tmp_path / "events.db")
 
     assert store.replay("never-seen") == []
 
 
 def test_store_survives_restart(tmp_path: Path) -> None:
-    first = JsonlEventStore(tmp_path)
+    db_path = tmp_path / "events.db"
+    first = SqliteEventStore(db_path)
     events = [_drafted(), _critique()]
     for event in events:
         first.append(event)
 
-    reopened = JsonlEventStore(tmp_path)
+    reopened = SqliteEventStore(db_path)
 
     assert [e.event_id for e in reopened.replay("spec-1")] == [e.event_id for e in events]
 
 
 def test_reopened_store_still_rejects_duplicate_ids_seen_before_restart(tmp_path: Path) -> None:
-    first = JsonlEventStore(tmp_path)
+    db_path = tmp_path / "events.db"
+    first = SqliteEventStore(db_path)
     event = _drafted()
     first.append(event)
 
-    reopened = JsonlEventStore(tmp_path)
+    reopened = SqliteEventStore(db_path)
 
     with pytest.raises(DuplicateEventError):
         reopened.append(event)
 
 
 def test_latest_of_type_returns_the_most_recent_match(tmp_path: Path) -> None:
-    store = JsonlEventStore(tmp_path)
+    store = SqliteEventStore(tmp_path / "events.db")
     store.append(_drafted())
     first_consensus = ConsensusReached(
         timestamp=NOW,
@@ -168,8 +177,9 @@ def test_latest_of_type_returns_the_most_recent_match(tmp_path: Path) -> None:
     assert latest.event_id == second_consensus.event_id
 
 
-def test_concurrent_appends_produce_no_interleaved_or_corrupted_lines(tmp_path: Path) -> None:
-    store = JsonlEventStore(tmp_path)
+def test_concurrent_appends_produce_no_lost_or_corrupted_rows(tmp_path: Path) -> None:
+    db_path = tmp_path / "events.db"
+    store = SqliteEventStore(db_path)
     events = [_critique(review_id=f"round-{i}") for i in range(50)]
 
     threads = [threading.Thread(target=store.append, args=(event,)) for event in events]
@@ -178,9 +188,5 @@ def test_concurrent_appends_produce_no_interleaved_or_corrupted_lines(tmp_path: 
     for thread in threads:
         thread.join()
 
-    path = tmp_path / "spec-1.jsonl"
-    lines = path.read_text().splitlines()
-    assert len(lines) == len(events)
-    for line in lines:
-        json.loads(line)  # each line is a single, complete, valid JSON object
+    assert _row_count(db_path) == len(events)
     assert {e.event_id for e in store.replay("spec-1")} == {e.event_id for e in events}

@@ -13,8 +13,8 @@ from roundtable.config import load_config
 from roundtable.events import ArtifactDrafted, ConsensusReached
 from roundtable.herdr import HerdrClient, HerdrClientProtocol
 from roundtable.orchestration import Deadlocked, ReachedConsensus, ReviewRunner, RunnerError
-from roundtable.store import EventStoreProtocol, JsonlEventStore
-from roundtable.workspace import config_path, events_root
+from roundtable.store import EventStoreProtocol, SqliteEventStore
+from roundtable.workspace import config_path, events_db_path
 
 EXIT_CONSENSUS = 0
 EXIT_ORCHESTRATION_FAILURE = 1
@@ -49,8 +49,8 @@ def execute_review(
             deadlock.
         herdr: The herdr client to drive agents through; a real subprocess
             client when omitted.
-        store: The event store to record against; a real JSONL store rooted
-            at the workspace's event directory when omitted.
+        store: The event store to record against; a real SQLite store at
+            the workspace's event database path when omitted.
 
     Returns:
         0 if consensus was reached, 2 if the run ended in an unresolved
@@ -62,7 +62,7 @@ def execute_review(
         click.echo(f"Invalid roster configuration: {exc}", err=True)
         return EXIT_ORCHESTRATION_FAILURE
 
-    store = store if store is not None else JsonlEventStore(events_root(workspace_root))
+    store = store if store is not None else SqliteEventStore(events_db_path(workspace_root))
     herdr = herdr if herdr is not None else HerdrClient()
     runner = ReviewRunner(
         herdr=herdr,
@@ -71,20 +71,14 @@ def execute_review(
         specification_id=specification_id,
         roster=config.roster,
         round_limit=config.round_limit,
+        report=lambda message: click.echo(message),
     )
 
     try:
-        outcome, warnings = runner.run(build_context=build_context, confirm=confirm)
+        outcome = runner.run(build_context=build_context, confirm=confirm)
     except RunnerError as exc:
         click.echo(f"Review failed: {exc}", err=True)
         return EXIT_ORCHESTRATION_FAILURE
-
-    for warning in warnings:
-        click.echo(
-            f"Warning: could not close pane {warning.pane_id} for {warning.agent_name}: "
-            f"{warning.reason}",
-            err=True,
-        )
 
     if isinstance(outcome, ReachedConsensus):
         click.echo(f"Consensus reached (state {outcome.final_state_id}).")
@@ -165,8 +159,8 @@ def run_review(
         confirm: Optional callback asking a human whether to resume after a deadlock.
         herdr: The herdr client to drive agents through; a real subprocess
             client when omitted.
-        store: The event store to record against; a real JSONL store rooted
-            at the workspace's event directory when omitted.
+        store: The event store to record against; a real SQLite store at
+            the workspace's event database path when omitted.
 
     Returns:
         0 if consensus was reached, 2 if the run ended in an unresolved
@@ -174,7 +168,7 @@ def run_review(
         (build context for `spec`, prior consensus for `code`) were not met
         — in which case no agent turn is started.
     """
-    store = store if store is not None else JsonlEventStore(events_root(workspace_root))
+    store = store if store is not None else SqliteEventStore(events_db_path(workspace_root))
 
     if target == "spec":
         build_context = _resolve_spec_build_context(description, context_file)

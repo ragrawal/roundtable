@@ -1,9 +1,9 @@
 Feature: Spec review rounds
-  A review round reaches consensus when no reviewer raises a blocking
-  critique, requests a revision when one does and rounds remain, declares a
-  deadlock when the round limit is reached with blocking critiques
-  outstanding, and can be resumed by a human's confirmation without
-  re-drafting.
+  A review round reaches consensus when no reviewer raises a blocking,
+  major, or minor critique, requests a revision when one does and rounds
+  remain, declares a deadlock when the round limit is reached with such
+  critiques outstanding, and can be resumed by a human's confirmation
+  without re-drafting. Only info critiques are purely advisory.
 
   Scenario: No findings reach consensus
     Given a draft awaiting critique
@@ -12,13 +12,13 @@ Feature: Spec review rounds
     When the round is decided as round 1 of 3
     Then consensus is declared
 
-  Scenario: Only major findings reach consensus, recorded as advisory
+  Scenario: Only info findings reach consensus, recorded as advisory
     Given a draft awaiting critique
-    And "security" raises a "major" critique on "Auth"
+    And "security" raises a "info" critique on "Auth"
     And "qa" approves with no findings
     When the round is decided as round 1 of 3
     Then consensus is declared
-    And the advisory findings include a "major" finding on "Auth"
+    And the advisory findings include a "info" finding on "Auth"
 
   Scenario: A single blocking critique requests a revision
     Given a draft awaiting critique
@@ -28,15 +28,31 @@ Feature: Spec review rounds
     Then a revision round is requested
     And the requested revision carries 1 critique(s)
 
-  Scenario: Blocking critiques from multiple reviewers are all carried into the revision
+  Scenario: A single major critique requests a revision
+    Given a draft awaiting critique
+    And "security" raises a "major" critique on "Auth"
+    And "qa" approves with no findings
+    When the round is decided as round 1 of 3
+    Then a revision round is requested
+    And the requested revision carries 1 critique(s)
+
+  Scenario: A single minor critique requests a revision
+    Given a draft awaiting critique
+    And "security" raises a "minor" critique on "Auth"
+    And "qa" approves with no findings
+    When the round is decided as round 1 of 3
+    Then a revision round is requested
+    And the requested revision carries 1 critique(s)
+
+  Scenario: Critiques of mixed severity from multiple reviewers are all carried into the revision
     Given a draft awaiting critique
     And "security" raises a "blocking" critique on "Auth"
-    And "qa" raises a "blocking" critique on "Payments"
+    And "qa" raises a "minor" critique on "Payments"
     When the round is decided as round 1 of 3
     Then a revision round is requested
     And the requested revision carries 2 critique(s)
 
-  Scenario: Blocking critiques outstanding at the round limit declare a deadlock
+  Scenario: Non-advisory critiques outstanding at the round limit declare a deadlock
     Given a draft awaiting critique
     And "security" raises a "blocking" critique on "Auth"
     And "qa" approves with no findings

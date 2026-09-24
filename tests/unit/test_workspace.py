@@ -119,7 +119,7 @@ def test_create_workspace_reuses_an_existing_git_repository(tmp_path: Path) -> N
 
 def test_create_workspace_reinit_replaces_roster_but_preserves_event_store(tmp_path: Path) -> None:
     create_workspace(tmp_path, CONFIG)
-    events_root(tmp_path).joinpath("some-spec.jsonl").write_text('{"kept": true}\n')
+    events_root(tmp_path).joinpath("events.db").write_text("kept")
 
     replacement = RoundtableConfig(
         roster=AgentRoster(agents=[DEVELOPER, SECURITY_REVIEWER]), round_limit=5
@@ -129,4 +129,4 @@ def test_create_workspace_reinit_replaces_roster_but_preserves_event_store(tmp_p
     from roundtable.config import load_config
 
     assert load_config(config_path(tmp_path)).round_limit == 5
-    assert events_root(tmp_path).joinpath("some-spec.jsonl").read_text() == '{"kept": true}\n'
+    assert events_root(tmp_path).joinpath("events.db").read_text() == "kept"

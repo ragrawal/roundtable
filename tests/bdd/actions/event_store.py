@@ -1,4 +1,4 @@
-"""Step definitions for exercising `roundtable.store.JsonlEventStore` end-to-end."""
+"""Step definitions for exercising `roundtable.store.SqliteEventStore` end-to-end."""
 
 from __future__ import annotations
 
@@ -10,15 +10,15 @@ from pydantic import ValidationError
 from pytest_bdd import given, parsers, then, when
 
 from roundtable.events import ArtifactDrafted, RoundtableEvent, RoundtableEventAdapter
-from roundtable.store import DuplicateEventError, JsonlEventStore
+from roundtable.store import DuplicateEventError, SqliteEventStore
 
 NOW = datetime(2026, 1, 1, tzinfo=UTC)
 
 
 @dataclass
 class EventStoreContext:
-    root: Path
-    store: JsonlEventStore
+    db_path: Path
+    store: SqliteEventStore
     appended: list[RoundtableEvent] = field(default_factory=list)
     last_error: Exception | None = None
 
@@ -37,7 +37,8 @@ def _drafted(specification_id: str, **overrides: object) -> ArtifactDrafted:
 
 @given("an empty event store", target_fixture="event_store_context")
 def given_empty_event_store(tmp_path: Path) -> EventStoreContext:
-    return EventStoreContext(root=tmp_path, store=JsonlEventStore(tmp_path))
+    db_path = tmp_path / "events.db"
+    return EventStoreContext(db_path=db_path, store=SqliteEventStore(db_path))
 
 
 @when(parsers.parse('{count:d} drafts are appended for "{specification_id}"'))
@@ -85,7 +86,7 @@ def when_invalid_critique_submitted(
 
 @when("the store is reopened")
 def when_store_is_reopened(event_store_context: EventStoreContext) -> None:
-    event_store_context.store = JsonlEventStore(event_store_context.root)
+    event_store_context.store = SqliteEventStore(event_store_context.db_path)
 
 
 @then(parsers.parse('replaying "{specification_id}" returns {count:d} events in order'))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import threading
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,7 +36,6 @@ from roundtable.orchestration import (
     ReachedConsensus,
     ReviewerTurn,
     ReviewRunner,
-    TeardownWarning,
 )
 
 DEVELOPER = AgentProfile(name="dev", role="developer", persona="Write the code.", kind="claude")
@@ -77,7 +77,6 @@ class FakeHerdrClient:
         self.started_agents: dict[str, str] = {}
         self.prompts: list[tuple[str, str]] = []
         self.fail_split_after: int | None = None
-        self.fail_close_for: set[str] = set()
         self.fail_prompt_for: set[str] = set()
         self.respond: Callable[[str, str], None] | None = None
 
@@ -96,8 +95,6 @@ class FakeHerdrClient:
         return pane_id
 
     def pane_close(self, pane_id: str) -> None:
-        if pane_id in self.fail_close_for:
-            raise HerdrError(f"simulated pane_close failure for {pane_id}")
         self.closed_panes.append(pane_id)
 
     def agent_start(
@@ -384,12 +381,13 @@ def test_run_reaches_consensus_and_records_consensus_reached(tmp_path: Path) -> 
 
     herdr.respond = respond
 
-    outcome, warnings = runner.run(build_context="build a widget")
+    outcome = runner.run(build_context="build a widget")
 
     assert isinstance(outcome, ReachedConsensus)
-    assert warnings == ()
     assert any(isinstance(e, ConsensusReached) for e in store.events)
     assert not any(isinstance(e, ConsensusDeadlocked) for e in store.events)
+    assert set(herdr.closed_panes) == set()
+    assert set(runner.panes) == {"dev", "sec", "pm"}
 
 
 def test_run_exhausts_round_limit_and_records_consensus_deadlocked(tmp_path: Path) -> None:
@@ -423,70 +421,27 @@ def test_run_exhausts_round_limit_and_records_consensus_deadlocked(tmp_path: Pat
 
     herdr.respond = respond
 
-    outcome, warnings = runner.run(build_context="build a widget")
+    outcome = runner.run(build_context="build a widget")
 
     assert isinstance(outcome, Deadlocked)
-    assert warnings == ()
     assert any(isinstance(e, ConsensusDeadlocked) for e in store.events)
     assert not any(isinstance(e, ConsensusReached) for e in store.events)
+    assert set(herdr.closed_panes) == set()
+    assert set(runner.panes) == {"dev", "sec", "pm"}
 
 
-def test_teardown_closes_only_framework_allocated_panes(tmp_path: Path) -> None:
-    herdr = FakeHerdrClient()
-    runner = _runner(tmp_path, herdr=herdr)
-    runner.allocate_panes()
-    allocated_panes = set(runner.panes.values())
-
-    warnings = runner.teardown()
-
-    assert set(herdr.closed_panes) == allocated_panes
-    assert warnings == ()
-    assert runner.panes == {}
-
-
-def test_teardown_retains_contested_panes_and_closes_the_rest(tmp_path: Path) -> None:
-    herdr = FakeHerdrClient()
-    runner = _runner(tmp_path, herdr=herdr)
-    runner.allocate_panes()
-    sec_pane = runner.panes["sec"]
-
-    warnings = runner.teardown(retain=frozenset({"sec"}))
-
-    assert sec_pane not in herdr.closed_panes
-    assert warnings == ()
-    assert runner.panes == {"sec": sec_pane}
-
-
-def test_teardown_collects_close_failures_as_warnings_without_stopping_other_closes(
-    tmp_path: Path,
-) -> None:
-    herdr = FakeHerdrClient()
-    runner = _runner(tmp_path, herdr=herdr)
-    runner.allocate_panes()
-    dev_pane, pm_pane, failing_pane = runner.panes["dev"], runner.panes["pm"], runner.panes["sec"]
-    herdr.fail_close_for = {failing_pane}
-
-    warnings = runner.teardown()
-
-    assert len(warnings) == 1
-    assert isinstance(warnings[0], TeardownWarning)
-    assert warnings[0].agent_name == "sec"
-    assert warnings[0].pane_id == failing_pane
-    assert set(herdr.closed_panes) == {dev_pane, pm_pane}
-
-
-def test_run_failure_propagates_even_when_teardown_also_fails_to_close_every_pane(
-    tmp_path: Path,
-) -> None:
+def test_run_failure_leaves_every_allocated_pane_open(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     herdr = FakeHerdrClient()
     runner = _runner(tmp_path, herdr=herdr)
     # FakeHerdrClient assigns pane ids sequentially in roster order (dev first).
     herdr.fail_prompt_for = {"pane-1"}
-    herdr.fail_close_for = {"pane-1", "pane-2", "pane-3"}
 
     with pytest.raises(DraftFailedError):
         runner.run(build_context="build a widget")
+
+    assert herdr.closed_panes == []
+    assert set(runner.panes) == {"dev", "sec", "pm"}
 
 
 def test_build_escalation_reports_pane_and_attach_instruction_without_selecting_a_position(
@@ -564,12 +519,11 @@ def test_run_confirm_and_resume_starts_a_new_round_without_redrafting_exempt_fro
         confirm_calls.append(True)
         return True
 
-    outcome, warnings = runner.run(build_context="build a widget", confirm=confirm)
+    outcome = runner.run(build_context="build a widget", confirm=confirm)
 
     assert dev_prompt_count == 1
     assert len(confirm_calls) == 1
     assert isinstance(outcome, ReachedConsensus)
-    assert warnings == ()
     deadlock_events = [e for e in store.events if isinstance(e, ConsensusDeadlocked)]
     consensus_events = [e for e in store.events if isinstance(e, ConsensusReached)]
     drafted_events = [e for e in store.events if isinstance(e, ArtifactDrafted)]
@@ -579,7 +533,143 @@ def test_run_confirm_and_resume_starts_a_new_round_without_redrafting_exempt_fro
     assert consensus_events[0].final_state_id == drafted_events[0].version_id
 
 
-def test_run_decline_ends_the_run_recording_the_deadlock_and_retaining_contested_panes(
+def test_run_reports_round_draft_critique_and_outcome_in_order(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    herdr = FakeHerdrClient()
+    store = FakeEventStore()
+    messages: list[str] = []
+    runner = ReviewRunner(
+        herdr=herdr,
+        store=store,
+        workspace_root=tmp_path,
+        specification_id="spec-1",
+        roster=ROSTER,
+        round_limit=3,
+        report=messages.append,
+    )
+    call_counts = {"dev": 0, "sec": 0, "pm": 0}
+
+    def respond(target: str, text: str) -> None:
+        agent = _agent_for_pane(runner, target)
+        call_counts[agent] += 1
+        path = runner._result_path(call_counts[agent], agent)  # noqa: SLF001
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if agent == "dev":
+            path.write_text(json.dumps({"summary": f"draft round {call_counts[agent]}"}))
+        else:
+            path.write_text(json.dumps({"findings": []}))
+
+    herdr.respond = respond
+
+    outcome = runner.run(build_context="build a widget")
+
+    assert isinstance(outcome, ReachedConsensus)
+    assert messages[0] == "Round 1 started."
+    assert messages[1] == "dev is drafting the specification."
+    critique_index = messages.index("Reviewers are critiquing the draft.")
+    assert critique_index == 2
+    assert messages[3].startswith("sec ") or messages[3].startswith("pm ")
+    assert messages[4].startswith("sec ") or messages[4].startswith("pm ")
+    assert {messages[3], messages[4]} == {
+        "sec raised no findings.",
+        "pm raised no findings.",
+    }
+    assert messages[-1] == "Consensus reached; approving reviewers: sec, pm."
+
+
+def test_run_reports_a_reviewer_finishing_before_the_others_turn_completes(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    herdr = FakeHerdrClient()
+    store = FakeEventStore()
+    messages: list[str] = []
+    runner = ReviewRunner(
+        herdr=herdr,
+        store=store,
+        workspace_root=tmp_path,
+        specification_id="spec-1",
+        roster=ROSTER,
+        round_limit=1,
+        report=messages.append,
+    )
+    pm_may_finish = threading.Event()
+
+    def respond(target: str, text: str) -> None:
+        agent = _agent_for_pane(runner, target)
+        path = runner._result_path(1, agent)  # noqa: SLF001
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if agent == "dev":
+            path.write_text(json.dumps({"summary": "the draft"}))
+            return
+        if agent == "pm":
+            pm_may_finish.wait(timeout=5)
+        path.write_text(json.dumps({"findings": []}))
+        if agent == "sec":
+            pm_may_finish.set()
+
+    herdr.respond = respond
+
+    runner.run(build_context="build a widget", confirm=lambda: False)
+
+    reviewer_messages = [
+        m for m in messages if m in ("sec raised no findings.", "pm raised no findings.")
+    ]
+    assert reviewer_messages == ["sec raised no findings.", "pm raised no findings."]
+
+
+def test_run_reports_a_revision_outcome_naming_outstanding_critique_count(tmp_path: Path) -> None:
+    _init_git_repo(tmp_path)
+    herdr = FakeHerdrClient()
+    store = FakeEventStore()
+    messages: list[str] = []
+    runner = ReviewRunner(
+        herdr=herdr,
+        store=store,
+        workspace_root=tmp_path,
+        specification_id="spec-1",
+        roster=ROSTER,
+        round_limit=2,
+        report=messages.append,
+    )
+    call_counts = {"dev": 0, "sec": 0, "pm": 0}
+
+    def respond(target: str, text: str) -> None:
+        agent = _agent_for_pane(runner, target)
+        call_counts[agent] += 1
+        path = runner._result_path(call_counts[agent], agent)  # noqa: SLF001
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if agent == "dev":
+            path.write_text(json.dumps({"summary": f"draft round {call_counts[agent]}"}))
+        elif call_counts[agent] == 1:
+            path.write_text(
+                json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "target_section": "Auth",
+                                "severity": "blocking",
+                                "description": f"{agent} objects",
+                            }
+                        ]
+                    }
+                )
+            )
+        else:
+            path.write_text(json.dumps({"findings": []}))
+
+    herdr.respond = respond
+
+    outcome = runner.run(build_context="build a widget")
+
+    assert isinstance(outcome, ReachedConsensus)
+    assert "Revision requested; 2 critique(s) outstanding." in messages
+    assert "Round 2 started." in messages
+    assert messages.index("Revision requested; 2 critique(s) outstanding.") < messages.index(
+        "Round 2 started."
+    )
+    assert messages.index("Round 2 started.") < messages.index("dev is revising the draft.")
+
+
+def test_run_decline_ends_the_run_recording_the_deadlock_and_retaining_every_pane(
     tmp_path: Path,
 ) -> None:
     _init_git_repo(tmp_path)
@@ -612,12 +702,11 @@ def test_run_decline_ends_the_run_recording_the_deadlock_and_retaining_contested
 
     herdr.respond = respond
 
-    outcome, warnings = runner.run(build_context="build a widget", confirm=lambda: False)
+    outcome = runner.run(build_context="build a widget", confirm=lambda: False)
 
     assert isinstance(outcome, Deadlocked)
     assert any(isinstance(e, ConsensusDeadlocked) for e in store.events)
     contested_agents = {vp.agent for vp in outcome.opposing_viewpoints}
     assert contested_agents == {"sec", "pm"}
-    assert warnings == ()
-    assert set(runner.panes) == contested_agents
-    assert all(pane not in herdr.closed_panes for pane in runner.panes.values())
+    assert set(runner.panes) == {"dev", "sec", "pm"}
+    assert herdr.closed_panes == []

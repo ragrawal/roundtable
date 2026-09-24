@@ -34,13 +34,13 @@ def _finding(
         ),
         pytest.param(
             (
-                ReviewerTurn("security", (_finding(Severity.MAJOR),)),
+                ReviewerTurn("security", (_finding(Severity.INFO),)),
                 ReviewerTurn("qa", ()),
             ),
             1,
             3,
             ReachedConsensus,
-            id="consensus_with_only_major_findings",
+            id="consensus_with_only_info_findings",
         ),
         pytest.param(
             (
@@ -51,6 +51,26 @@ def _finding(
             3,
             RequestRevision,
             id="revision_on_a_single_blocking_critique",
+        ),
+        pytest.param(
+            (
+                ReviewerTurn("security", (_finding(Severity.MAJOR),)),
+                ReviewerTurn("qa", ()),
+            ),
+            1,
+            3,
+            RequestRevision,
+            id="revision_on_a_single_major_critique",
+        ),
+        pytest.param(
+            (
+                ReviewerTurn("security", (_finding(Severity.MINOR),)),
+                ReviewerTurn("qa", ()),
+            ),
+            1,
+            3,
+            RequestRevision,
+            id="revision_on_a_single_minor_critique",
         ),
         pytest.param(
             (
@@ -77,14 +97,14 @@ def test_decide_maps_inputs_to_the_correct_outcome(
     assert isinstance(outcome, expected_type)
 
 
-def test_consensus_carries_major_finding_as_advisory_without_blocking() -> None:
-    major = _finding(Severity.MAJOR, description="Consider renaming.")
-    turns = (ReviewerTurn("security", (major,)), ReviewerTurn("qa", ()))
+def test_consensus_carries_info_finding_as_advisory_without_blocking() -> None:
+    info = _finding(Severity.INFO, description="Consider renaming.")
+    turns = (ReviewerTurn("security", (info,)), ReviewerTurn("qa", ()))
 
     outcome = ReviewRound.decide(draft_version="abc123", turns=turns, round_number=1, round_limit=3)
 
     assert isinstance(outcome, ReachedConsensus)
-    assert major in outcome.advisory_findings
+    assert info in outcome.advisory_findings
     assert outcome.approving_reviewers == ("security", "qa")
     assert outcome.final_state_id == "abc123"
 
@@ -128,6 +148,20 @@ def test_revision_request_carries_every_blocking_critique() -> None:
 
     assert isinstance(outcome, RequestRevision)
     assert outcome.blocking_critiques == (security_finding, qa_finding)
+
+
+def test_revision_request_carries_critiques_of_mixed_severity() -> None:
+    blocking_finding = _finding(Severity.BLOCKING, description="Missing auth check.")
+    minor_finding = _finding(Severity.MINOR, description="Rename this variable.")
+    turns = (
+        ReviewerTurn("security", (blocking_finding,)),
+        ReviewerTurn("qa", (minor_finding,)),
+    )
+
+    outcome = ReviewRound.decide(draft_version="abc123", turns=turns, round_number=1, round_limit=3)
+
+    assert isinstance(outcome, RequestRevision)
+    assert outcome.blocking_critiques == (blocking_finding, minor_finding)
 
 
 def test_incomplete_round_names_the_failed_reviewer_instead_of_declaring_consensus() -> None:
