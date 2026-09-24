@@ -443,6 +443,59 @@ def test_run_exhausts_round_limit_and_records_consensus_deadlocked(tmp_path: Pat
     assert set(runner.panes) == {"dev", "sec", "pm"}
 
 
+def test_run_reports_deadlock_trade_offs_and_each_contested_agents_attach_instruction(
+    tmp_path: Path,
+) -> None:
+    _init_git_repo(tmp_path)
+    herdr = FakeHerdrClient()
+    store = FakeEventStore()
+    messages: list[str] = []
+    runner = ReviewRunner(
+        herdr=herdr,
+        store=store,
+        workspace_root=tmp_path,
+        specification_id="spec-1",
+        roster=ROSTER,
+        round_limit=3,
+        report=messages.append,
+    )
+    call_counts = {"dev": 0, "sec": 0, "pm": 0}
+
+    def respond(target: str, text: str) -> None:
+        agent = _agent_for_pane(runner, target)
+        call_counts[agent] += 1
+        path = runner._result_path(call_counts[agent], agent)  # noqa: SLF001
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if agent == "dev":
+            path.write_text(json.dumps({"summary": f"draft round {call_counts[agent]}"}))
+        else:
+            path.write_text(
+                json.dumps(
+                    {
+                        "findings": [
+                            {
+                                "target_section": "Auth",
+                                "severity": "blocking",
+                                "description": f"{agent} objects",
+                            }
+                        ]
+                    }
+                )
+            )
+
+    herdr.respond = respond
+
+    outcome = runner.run(build_context="build a widget")
+
+    assert isinstance(outcome, Deadlocked)
+    assert any("Trade-offs:" in message and "objects" in message for message in messages)
+    for agent in ("sec", "pm"):
+        assert any(
+            message.startswith(f"{agent}'s position") and runner.panes[agent] in message
+            for message in messages
+        )
+
+
 def test_run_failure_leaves_every_allocated_pane_open(tmp_path: Path) -> None:
     _init_git_repo(tmp_path)
     herdr = FakeHerdrClient()

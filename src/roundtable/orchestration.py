@@ -334,10 +334,16 @@ class ReviewRunner:
             DraftFailedError: the developer agent's turn did not produce a draft.
         """
         developer = self.roster.developer
+        change_dir = f"openspec/changes/{self.specification_id}/"
         result_path = self._result_path(round_number, developer.name)
         prompt = (
             f"{developer.persona}\n\nDraft the specification for: {build_context}\n"
-            f'Write your result as JSON matching {{"summary": str}} to {result_path}.'
+            f"Create the real OpenSpec change at {change_dir} (proposal.md, a spec "
+            "delta under specs/, and tasks.md; add design.md only if the change "
+            "needs one) — these files are the artifact under review, not the "
+            "summary below.\n"
+            f'Then write your result as JSON matching {{"summary": str}} to '
+            f"{result_path}, summarizing what you drafted."
         )
         self.report(f"{developer.name} is drafting the specification.")
         try:
@@ -363,10 +369,14 @@ class ReviewRunner:
     def _run_reviewer_turn(
         self, reviewer: AgentProfile, round_number: int, draft: ArtifactDrafted
     ) -> tuple[CritiqueFinding, ...]:
+        change_dir = f"openspec/changes/{self.specification_id}/"
         result_path = self._result_path(round_number, reviewer.name)
         prompt = (
             f"{reviewer.persona}\n\nCritique this draft (version {draft.version_id}):\n"
             f"{draft.content}\n\n"
+            f"Read the real artifact at {change_dir} (proposal.md, the spec "
+            "delta(s), tasks.md) before critiquing — the summary above is only "
+            "a pointer, not the thing to review.\n\n"
             f"Write your result as JSON to {result_path} matching exactly this shape "
             '(no other field names): {"findings": [{"target_section": str, '
             f'"severity": one of {_SEVERITY_VALUES}, "description": str, '
@@ -443,6 +453,7 @@ class ReviewRunner:
             )
         )
         developer = self.roster.developer
+        change_dir = f"openspec/changes/{self.specification_id}/"
         next_round = round_number + 1
         result_path = self._result_path(next_round, developer.name)
         critiques_text = "\n".join(
@@ -452,7 +463,9 @@ class ReviewRunner:
         prompt = (
             f"{developer.persona}\n\nRevise the draft to resolve these blocking critiques:\n"
             f"{critiques_text}\n\n"
-            f'Write your result as JSON matching {{"summary": str}} to {result_path}.'
+            f"Update the real OpenSpec change at {change_dir} to resolve them.\n"
+            f'Then write your result as JSON matching {{"summary": str}} to '
+            f"{result_path}, summarizing what you changed."
         )
         self.report(f"{developer.name} is revising the draft.")
         try:
@@ -598,7 +611,11 @@ class ReviewRunner:
 
             self.record_deadlock(outcome, round_number=round_number)
             self.report(f"Deadlock declared on {outcome.target_section}.")
-            self.build_escalation(outcome)
+            self.report(f"Trade-offs: {outcome.trade_offs}")
+            for instruction in self.build_escalation(outcome):
+                self.report(
+                    f"{instruction.agent_name}'s position — {instruction.attach_instruction}"
+                )
             if confirm is None or not confirm():
                 return outcome
 

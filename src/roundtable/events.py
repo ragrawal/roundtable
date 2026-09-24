@@ -68,10 +68,11 @@ class OpposingViewpoint(BaseModel):
 class ArtifactDrafted(EventEnvelope):
     """Recorded when a developer agent's draft is accepted and committed.
 
-    Shared by both review phases: for a spec-phase draft, `content` is the
-    full OpenSpec change text; for a code-phase draft, it is a diff or
-    file-change summary rather than the full multi-file diff. `version_id`,
-    not `content`, is the canonical reference for the complete state.
+    `content` is always a short summary, never the full artifact: for a
+    spec-phase draft, the real content lives in the `openspec/changes/`
+    files committed alongside it; for a code-phase draft, it is the
+    committed diff. `version_id`, not `content`, is the canonical reference
+    for the complete state.
     """
 
     event_type: Literal["ArtifactDrafted"] = "ArtifactDrafted"
