@@ -76,6 +76,9 @@ class IncompleteRound:
 
 RoundOutcome = ReachedConsensus | RequestRevision | Deadlocked | IncompleteRound
 
+_SEVERITY_VALUES = ", ".join(f'"{severity.value}"' for severity in Severity)
+"""Rendered once for the critique prompt, so agents see the exact allowed `severity` values."""
+
 
 class ReviewRound:
     """Pure mapping from a round's inputs to its outcome — no I/O, fully table-testable."""
@@ -349,7 +352,12 @@ class ReviewRunner:
         prompt = (
             f"{reviewer.persona}\n\nCritique this draft (version {draft.version_id}):\n"
             f"{draft.content}\n\n"
-            f'Write your result as JSON matching {{"findings": [...]}} to {result_path}.'
+            f"Write your result as JSON to {result_path} matching exactly this shape "
+            '(no other field names): {"findings": [{"target_section": str, '
+            f'"severity": one of {_SEVERITY_VALUES}, "description": str, '
+            '"suggested_patch": str or null}]}. '
+            'Use "blocking" only for a finding that must be fixed before this draft '
+            "can be accepted; use an empty findings list if you have none."
         )
         self.herdr.agent_prompt(
             self.panes[reviewer.name], prompt, wait=True, timeout_ms=self.turn_timeout_ms
@@ -528,6 +536,11 @@ class ReviewRunner:
         the round limit — without re-running the draft phase; a falsy result
         or a missing `confirm` ends the run in the declared deadlock.
 
+        A reviewer turn that fails or times out ends the run immediately —
+        it is not retried and does not count against the round limit — but
+        the failed reviewer's pane is left open rather than torn down, so a
+        human can attach and inspect what went wrong.
+
         Args:
             build_context: The build description that seeds the first draft.
             confirm: Called to block for human confirmation after a deadlock
@@ -537,7 +550,8 @@ class ReviewRunner:
             The run's terminal outcome and any teardown warnings.
 
         Raises:
-            IncompleteRoundError: a reviewer turn failed or timed out.
+            IncompleteRoundError: a reviewer turn failed or timed out; the
+                failed reviewer's pane remains open for inspection.
         """
         self.allocate_panes()
         retain_agents: frozenset[str] = frozenset()
@@ -558,6 +572,7 @@ class ReviewRunner:
                 )
 
                 if isinstance(outcome, IncompleteRound):
+                    retain_agents = frozenset(outcome.failed_reviewers)
                     raise IncompleteRoundError(outcome.failed_reviewers)
 
                 if isinstance(outcome, ReachedConsensus):

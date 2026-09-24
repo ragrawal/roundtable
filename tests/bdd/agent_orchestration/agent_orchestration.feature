@@ -20,6 +20,9 @@ Feature: Agent orchestration
     And the "sec" reviewer never writes a critique result
     When a review run starts with build context "a widget"
     Then the run reports the round as incomplete, naming "sec"
+    And the "sec" agent's pane remains open for escalation
+    And the "dev" agent's pane is released
+    And the "pm" agent's pane is released
 
   Scenario: Teardown after consensus releases every pane
     Given a roster of one developer and two reviewers

@@ -15,6 +15,7 @@ CONFIG_FILENAME = "roundtable.toml"
 ROUNDTABLE_DIR = ".roundtable"
 SCRATCH_DIRNAME = "scratch"
 EVENTS_DIRNAME = "events"
+EVENTS_DB_FILENAME = "events.db"
 SCRATCH_GITIGNORE_ENTRY = f"{ROUNDTABLE_DIR}/{SCRATCH_DIRNAME}/"
 
 
@@ -85,6 +86,11 @@ def config_path(workspace_root: Path) -> Path:
 def events_root(workspace_root: Path) -> Path:
     """Path to `workspace_root`'s event store directory."""
     return workspace_root / ROUNDTABLE_DIR / EVENTS_DIRNAME
+
+
+def events_db_path(workspace_root: Path) -> Path:
+    """Path to `workspace_root`'s SQLite event database, inside its event store directory."""
+    return events_root(workspace_root) / EVENTS_DB_FILENAME
 
 
 def scratch_root(workspace_root: Path) -> Path:
