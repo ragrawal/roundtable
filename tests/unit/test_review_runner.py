@@ -26,6 +26,7 @@ from roundtable.events import (
 )
 from roundtable.herdr import AgentState, HerdrError, PaneDirection
 from roundtable.orchestration import (
+    CritiqueResult,
     Deadlocked,
     DraftFailedError,
     DraftResult,
@@ -190,6 +191,18 @@ def test_read_result_returns_a_well_formed_result(tmp_path: Path) -> None:
 
     assert isinstance(result, DraftResult)
     assert result.summary == "the draft"
+
+
+def test_read_result_ignores_trailing_text_after_the_json_value(tmp_path: Path) -> None:
+    runner = _runner(tmp_path)
+    result_path = runner._result_path(1, "sec")  # noqa: SLF001
+    result_path.parent.mkdir(parents=True, exist_ok=True)
+    result_path.write_text('{"findings": []}\nEOF\npython -m json.tool some/other/file.json\n')
+
+    result = runner._read_result("sec", result_path, CritiqueResult)  # noqa: SLF001
+
+    assert isinstance(result, CritiqueResult)
+    assert result.findings == []
 
 
 def test_read_result_raises_missing_result_error_with_terminal_snapshot(tmp_path: Path) -> None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -292,9 +293,16 @@ class ReviewRunner:
         self.panes = allocated
 
     def _read_result(self, agent_name: str, path: Path, model: type[BaseModel]) -> BaseModel:
+        """Parse `path` as `model`, tolerating trailing text after the JSON value.
+
+        Agents occasionally leave stray text after the JSON they were asked
+        to write (e.g. a leaked shell heredoc terminator or follow-up
+        command); only the first complete JSON value in the file is parsed.
+        """
         if not path.exists():
             raise MissingResultError(agent_name, path, self._snapshot(agent_name))
-        return model.model_validate_json(path.read_text())
+        decoded, _ = json.JSONDecoder().raw_decode(path.read_text().lstrip())
+        return model.model_validate(decoded)
 
     def _snapshot(self, agent_name: str) -> str:
         try:
