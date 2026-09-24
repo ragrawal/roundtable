@@ -22,6 +22,7 @@ from tests.bdd.actions.review import *  # noqa: E402,F403
 from tests.bdd.actions.roundtable_cli import *  # noqa: E402,F403
 from tests.bdd.actions.shell import *  # noqa: E402,F403
 from tests.bdd.actions.spec_review_rounds import *  # noqa: E402,F403
+from tests.bdd.actions.web_ui import *  # noqa: E402,F403
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 

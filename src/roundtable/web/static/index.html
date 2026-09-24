@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>roundtable</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>roundtable</h1>
+    <nav>
+      <button type="button" data-tab="roster" class="tab-button active">Roster</button>
+      <button type="button" data-tab="feed" class="tab-button">Event feed</button>
+    </nav>
+  </header>
+
+  <main>
+    <section id="roster-tab" class="tab-panel active">
+      <h2>Agent roster</h2>
+      <p id="roster-message" class="message" hidden></p>
+      <table id="roster-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Role</th>
+            <th>Persona</th>
+            <th>Kind</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody id="roster-rows"></tbody>
+      </table>
+      <button type="button" id="add-agent">Add agent</button>
+
+      <div class="field">
+        <label for="round-limit">Round limit</label>
+        <input type="number" id="round-limit" min="1" />
+      </div>
+
+      <button type="button" id="save-roster">Save roster</button>
+    </section>
+
+    <section id="feed-tab" class="tab-panel">
+      <h2>Live event feed</h2>
+      <div class="field">
+        <label for="specification-id">Specification id</label>
+        <input type="text" id="specification-id" placeholder="e.g. add-auth" />
+        <button type="button" id="connect-feed">Connect</button>
+      </div>
+
+      <div id="status-badges">
+        <span id="outcome-label" class="badge">-</span>
+        <span id="connection-health" class="badge">-</span>
+      </div>
+
+      <div id="filters">
+        <input type="text" id="filter-emitter" placeholder="Filter by emitter" />
+        <select id="filter-event-type">
+          <option value="">All event types</option>
+          <option value="ArtifactDrafted">ArtifactDrafted</option>
+          <option value="CritiqueSubmitted">CritiqueSubmitted</option>
+          <option value="RevisionRequested">RevisionRequested</option>
+          <option value="ConsensusDeadlocked">ConsensusDeadlocked</option>
+          <option value="ConsensusReached">ConsensusReached</option>
+        </select>
+        <input type="text" id="filter-round" placeholder="Filter by round" />
+        <input type="text" id="filter-keyword" placeholder="Filter by keyword" />
+      </div>
+
+      <div class="feed-columns">
+        <div>
+          <h3>Events by round</h3>
+          <div id="event-groups"></div>
+        </div>
+        <div>
+          <h3>Artifact versions</h3>
+          <ul id="version-list"></ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
