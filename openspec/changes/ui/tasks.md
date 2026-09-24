@@ -33,16 +33,23 @@
 - [ ] 2.3 Add a version-list endpoint deriving entries from
   `ArtifactDrafted` events only, exposing `version_id`, `emitter`,
   `timestamp`, `content` — no full-content or diff resolution
-- [ ] 2.4 Implement lifecycle-status derivation exactly per the spec's
-  "Run lifecycle status" requirement, including the deadlock-is-ambiguous
-  rule from `design.md`
-- [ ] 2.5 Unit tests: dedup by `event_id` across repeated polls, status =
-  consensus-reached only on a `ConsensusReached` tail, status =
-  deadlocked-ambiguous (not complete) on a `ConsensusDeadlocked` tail,
-  status transitions to in-progress once a post-deadlock
-  `CritiqueSubmitted` arrives, stale vs. disconnected computed
-  independently — verify via `uv run pytest tests/unit/test_event_feed.py
-  -v` (or equivalent)
+- [ ] 2.4 Implement lifecycle-status derivation as the two independent
+  signals the spec's "Run lifecycle status" requirement defines — outcome
+  label (`not started` / `in progress (estimated)` / `deadlocked (may
+  still be active)` / `consensus reached`) and connection health (`live` /
+  `stale` / `disconnected`) — returning both, never merged into one field,
+  per `design.md`
+- [ ] 2.5 Unit tests: dedup by `event_id` across repeated polls; outcome
+  label = `not started` on an empty `replay` result; connection health on
+  an empty `replay` result is `live` or `disconnected` only, never `stale`;
+  outcome label = `consensus reached` only on a `ConsensusReached` tail and
+  remains `consensus reached` after connection health flips to
+  `disconnected`; outcome label = `deadlocked (may still be active)` (not
+  `complete`) on a `ConsensusDeadlocked` tail, including together with a
+  `stale` connection health; outcome label transitions to `in progress`
+  once a post-deadlock `CritiqueSubmitted` arrives; `stale` vs.
+  `disconnected` computed independently — verify via
+  `uv run pytest tests/unit/test_event_feed.py -v` (or equivalent)
 
 ## 3. Frontend: roster editor
 

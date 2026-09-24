@@ -53,13 +53,49 @@ Network filesystems (NFS, etc.) and Windows are out of scope this
 iteration; if the workspace ever needs to live on one, this protocol needs
 revisiting rather than assumed to carry over.
 
-## Decision: run lifecycle status as a labeled estimate, with deadlock treated as ambiguous
+## Decision: run lifecycle status as two orthogonal signals, with deadlock treated as ambiguous
 
-**What**: status is derived purely from the event tail plus live-connection
-state (see the spec's "Run lifecycle status" requirement for the exact
-rules). `ConsensusReached` is the only tail value this design treats as
-reliably terminal. `ConsensusDeadlocked` is shown as "deadlocked (may still
-be active)," never as "complete."
+**What**: status is two independent signals, not one field: an **outcome
+label** derived from the event tail (`not started` / `in progress
+(estimated)` / `deadlocked (may still be active)` / `consensus reached`),
+and a **connection health** derived from the live transport and event
+recency (`live` / `stale` / `disconnected`) — see the spec's "Run lifecycle
+status" requirement for the exact rules. `ConsensusReached` is the only
+tail value this design treats as reliably terminal. `ConsensusDeadlocked`
+is shown as "deadlocked (may still be active)," never as "complete." The
+two signals are always shown together; connection health never overwrites
+or hides the outcome label.
+
+**Why two signals instead of one merged status?** The first draft listed
+`consensus reached`, `deadlocked (may still be active)`, `in progress`,
+`stale`, and `disconnected` as five cases of a single status field, with
+`stale`/`disconnected` explicitly "evaluated independently" of the others.
+That's a contradiction in the shape of the model: independence means more
+than one of these can be true at once (a `ConsensusReached` tail is
+perfectly compatible with the transport later going `disconnected`, and a
+`ConsensusDeadlocked` tail sitting untouched for a minute is simultaneously
+`deadlocked` and `stale`), but a single field can only hold one value.
+Review (round 4) flagged that this leaves an implementation free to pick
+either the tail-derived label or the transport-derived label when both
+apply, which could — worst case — silently downgrade a reliably terminal
+`consensus reached` result to `disconnected` the moment a viewer's tab
+loses its connection. Splitting outcome (what the event history says
+happened) from connection health (whether the live view of that history is
+currently fresh) removes the ambiguity: each is independently well-defined,
+both are shown, and the one signal this design calls reliably terminal —
+`consensus reached` — can never be hidden by the other.
+
+**Why "not started"?** The first draft's five cases all presupposed at
+least one recorded event (`stale` needs a last-event timestamp to compare
+against; `in progress` needs a last event that isn't a terminal type).
+Review (round 4) pointed out that `replay` returning no events — the
+normal state of a specification before its first run, or a brand-new
+specification — falls into none of them, leaving an implementation to
+guess and risk mislabeling an idle specification as `stale` or
+`disconnected`. `not started` is now the outcome label whenever history is
+empty, and staleness is explicitly not evaluated against zero events (there
+is no timestamp to measure it from) — an empty-history specification's
+connection health is `live` or `disconnected` only.
 
 **Why not treat any terminal-shaped event as "complete"?** The first draft
 treated both `ConsensusReached` and `ConsensusDeadlocked` as terminal,

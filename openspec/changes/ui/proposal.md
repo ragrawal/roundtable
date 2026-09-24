@@ -35,13 +35,16 @@ they relate to — as they're recorded.
   `RevisionRequested`, `ConsensusDeadlocked`, `ConsensusReached`), grouped by
   round, delivered by a backend process that tails `SqliteEventStore` and
   pushes (or is polled for) new events, deduplicated by `event_id`.
-- **Run lifecycle status as a best-effort, clearly-labeled estimate**: derived
-  from the tail of the event stream and the live connection, never gating
-  roster saves or any other write. A `ConsensusDeadlocked` tail is labeled as
-  an ambiguous, possibly-still-active state rather than "complete," because
+- **Run lifecycle status as two always-defined, independent signals**: an
+  outcome label derived from the event tail (including a `not started`
+  label when no events exist yet) and a connection health derived from the
+  live transport, shown together rather than merged, never gating roster
+  saves or any other write. A `ConsensusDeadlocked` tail is labeled as an
+  ambiguous, possibly-still-active outcome rather than "complete," because
   `ReviewRunner.run` can block on human confirmation after recording it and
   then resume into another round without emitting any event until the next
-  critique lands.
+  critique lands; connection health (e.g. a later disconnect) never
+  replaces or hides a reliably terminal `consensus reached` outcome.
 - **Artifact version browser**: lists every `ArtifactDrafted` version
   (`version_id`, `emitter`, `timestamp`) and its `content` field, explicitly
   labeled as a reviewer-facing summary, not the complete artifact. Resolving

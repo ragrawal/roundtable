@@ -183,21 +183,36 @@ runs of the same specification.
 - **THEN** the UI shows a single ordered event history for that
   specification, with no run-selection control
 
-### Requirement: Run lifecycle status is a labeled, non-authoritative estimate
+### Requirement: Run lifecycle status is two always-defined, independently-shown signals
 
-The UI SHALL compute and display a run lifecycle status for the viewed
-specification, and SHALL present it as a best-effort, event-derived
-estimate — not an authoritative process-completion signal — using a
-visually distinct, muted treatment from any hard state indicator. This
-status SHALL NEVER gate a roster-edit save or any other write; roster
-saves are governed only by the advisory lock.
+The UI SHALL compute and display run lifecycle status as two orthogonal
+signals for the viewed specification — an **outcome label**, derived
+solely from the event tail, and a **connection health**, derived solely
+from the live transport and event recency — and SHALL display both
+simultaneously (e.g. outcome label as the primary state, connection health
+as a secondary badge) rather than collapsing them into one field. Neither
+signal is an authoritative process-completion signal except where noted
+below; both SHALL be presented with a visually distinct, muted treatment
+from a hard state indicator, except the terminal "consensus reached"
+outcome label. Status (either signal) SHALL NEVER gate a roster-edit save
+or any other write; roster saves are governed only by the advisory lock.
 
-Status SHALL be computed as:
-- **consensus reached**: the last recorded event is `ConsensusReached`.
-  This is the one status this requirement treats as reliably terminal,
-  because `ReviewRunner.run` returns unconditionally immediately after
-  recording it.
-- **deadlocked (may still be active)**: the last recorded event is
+Every specification the UI can be pointed at SHALL have a well-defined
+value for both signals at all times, including a specification for which
+`replay` returns no events — there is no state this requirement leaves
+undefined.
+
+**Outcome label**, computed from `replay(specification_id)`:
+- **not started**: `replay` returns no events. This covers a specification
+  with no run yet — a brand-new specification, or one the UI is pointed at
+  before its first draft — and is the only outcome label that applies when
+  history is empty.
+- **consensus reached**: at least one event exists and the last one is
+  `ConsensusReached`. This is the one outcome label this requirement
+  treats as reliably terminal, because `ReviewRunner.run` returns
+  unconditionally immediately after recording it. Once shown, it SHALL
+  remain displayed regardless of any later change in connection health.
+- **deadlocked (may still be active)**: the last event is
   `ConsensusDeadlocked`. The UI SHALL NOT label this "complete," because
   `ReviewRunner.run` can block on human confirmation after recording a
   deadlock and, given a truthy confirmation, resume into another critique
@@ -207,37 +222,87 @@ Status SHALL be computed as:
   ended here" from "the run is paused here awaiting a human." The UI SHALL
   label this state as ambiguous/possibly-active rather than as either
   "in progress" or "complete."
-- **in progress (estimated)**: the last event is not `ConsensusReached` or
-  `ConsensusDeadlocked`, and the live connection (see the transport
-  requirement below) is active.
-- **stale**: no new event has arrived within a configured timeout (default
-  30s, operator-configurable), evaluated independently of connection state.
-- **disconnected**: the live connection itself is down, evaluated
-  independently of staleness.
+- **in progress (estimated)**: at least one event exists and the last one
+  is not `ConsensusReached` or `ConsensusDeadlocked` (i.e. `ArtifactDrafted`,
+  `CritiqueSubmitted`, or `RevisionRequested`).
+
+**Connection health**, computed from the live transport (see the transport
+requirement below) and, where applicable, event recency:
+- **live**: the transport is connected, and either no event has been
+  recorded yet or the most recent event arrived within the configured
+  staleness timeout (default 30s, operator-configurable).
+- **stale**: the transport is connected, at least one event has been
+  recorded, and no new event has arrived within the staleness timeout.
+  Staleness SHALL NOT be evaluated when zero events have ever been
+  recorded — there is no event timestamp to measure staleness from, so an
+  empty history is "live" or "disconnected" only, never "stale"; the
+  "not started" outcome label alone covers that case.
+- **disconnected**: the transport itself is down, regardless of event
+  count or recency. This is evaluated independently of staleness and can
+  co-occur with any outcome label, including "consensus reached."
+
+**Composition**: connection health SHALL NOT override, hide, or be merged
+into the outcome label. The two are shown together as independent facts
+(e.g. "consensus reached" + "disconnected" is a valid, expected
+combination once a completed run's viewer later loses its connection —
+the completed outcome is not downgraded or replaced by the transport
+state). "not started" may co-occur with any connection health value (e.g.
+a UI that fails to connect before any run has begun shows "not started" +
+"disconnected," not "stale").
+
+#### Scenario: A specification with no recorded run shows "not started"
+- **WHEN** `replay` returns no events for the viewed specification
+- **THEN** the UI shows the outcome label "not started"
+- **AND** does not show "stale," "in progress," or any other outcome label
+
+#### Scenario: An idle new specification is not shown as stale
+- **WHEN** `replay` returns no events for the viewed specification
+- **AND** the live transport is connected
+- **THEN** the connection health is shown as "live," not "stale," because
+  staleness is not evaluated with zero recorded events
 
 #### Scenario: Consensus is shown as reliably terminal
 - **WHEN** the last recorded event for a specification is `ConsensusReached`
-- **THEN** the UI shows a terminal "consensus reached" status
+- **THEN** the UI shows the outcome label "consensus reached"
+
+#### Scenario: Consensus reached is not replaced by a later disconnect
+- **WHEN** the outcome label for a specification is "consensus reached"
+- **AND** the live connection subsequently drops
+- **THEN** the UI continues to show the outcome label "consensus reached"
+- **AND** additionally shows the connection health "disconnected"
+- **AND** does not replace, hide, or downgrade the "consensus reached"
+  label because of the disconnect
 
 #### Scenario: Deadlock is shown as ambiguous, not complete
 - **WHEN** the last recorded event for a specification is
   `ConsensusDeadlocked`
-- **THEN** the UI shows a "deadlocked (may still be active)" status
+- **THEN** the UI shows the outcome label "deadlocked (may still be
+  active)"
 - **AND** the UI does not present this as a completed run
+
+#### Scenario: A deadlocked outcome can be shown alongside a stale connection
+- **WHEN** the outcome label for a specification is "deadlocked (may still
+  be active)"
+- **AND** no new event has arrived within the staleness timeout while the
+  transport remains connected
+- **THEN** the UI shows both the outcome label "deadlocked (may still be
+  active)" and the connection health "stale," without either one replacing
+  the other
 
 #### Scenario: A resumed round after deadlock updates status without a resume event
 - **WHEN** a run's last recorded event is `ConsensusDeadlocked`, and the
   operator has been shown the ambiguous deadlock status
 - **AND** the runner subsequently resumes (human confirmation was truthy)
   and records a new `CritiqueSubmitted` event for the next round
-- **THEN** the UI's status transitions to "in progress (estimated)" once
-  that event is delivered, with no dedicated resume event required
+- **THEN** the UI's outcome label transitions to "in progress (estimated)"
+  once that event is delivered, with no dedicated resume event required
 
 #### Scenario: Status never blocks a roster save
-- **WHEN** the viewed specification's status is "in progress (estimated)"
+- **WHEN** the viewed specification's outcome label is "in progress
+  (estimated)"
 - **AND** an operator saves an unrelated roster edit
 - **THEN** the save proceeds, gated only by the advisory lock, and the
-  UI does not block or warn the save away because of the status
+  UI does not block or warn the save away because of either status signal
 
 ### Requirement: Artifact version browser shows labeled summaries only
 
